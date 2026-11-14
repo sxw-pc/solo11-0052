@@ -1,0 +1,28 @@
+plan_id: stratified-basic
+dataset:
+  path: ../fixtures/population_stratified.csv
+  format: csv
+key_field: subject_id
+mode: stratified
+seed: 20260101
+size: 18
+strata_field: region
+expected_distribution:
+  region_A: 9
+  region_B: 6
+  region_C: 3
+checks:
+  - id: quota_region
+    type: quota
+  - id: rate_band
+    type: rate_range
+    min: 0.25
+    max: 0.35
+  - id: coverage_region
+    type: coverage
+    field: region
+    groups: [region_A, region_B, region_C]
+  - id: keys_unique
+    type: key_unique
+  - id: keys_in_population
+    type: no_overlap

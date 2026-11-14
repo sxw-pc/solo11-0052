@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sample-attest"
+version = "0.1.0"
+description = "Local, offline, deterministic data-sampling attestation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Sample Attest maintainers"}]
+dependencies = [
+  "PyYAML>=6.0,<7",
+  "Flask>=3.0,<4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0,<9", "pytest-cov>=5.0,<8"]
+
+[project.scripts]
+sample-attest = "sample_attest.cli:entrypoint"
+
+[tool.setuptools.packages.find]
+include = ["sample_attest*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider -p no:sanic"
+filterwarnings = [
+  "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["sample_attest"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

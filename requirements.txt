@@ -1,0 +1,5 @@
+# Runtime + test dependencies. Install once, then run fully offline.
+PyYAML==6.0.2
+Flask==3.0.3
+pytest==8.3.5
+pytest-cov==7.1.0
