@@ -1,0 +1,17 @@
+plan_id: systematic-basic
+dataset:
+  path: ../fixtures/population_small.csv
+  format: csv
+key_field: subject_id
+mode: systematic
+seed: 11
+size: 10
+checks:
+  - id: rate_band
+    type: rate_range
+    min: 0.3
+    max: 0.4
+  - id: keys_unique
+    type: key_unique
+  - id: keys_in_population
+    type: no_overlap

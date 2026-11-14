@@ -1,0 +1,18 @@
+plan_id: cluster-basic
+dataset:
+  path: ../fixtures/population_cluster.jsonl
+  format: jsonl
+key_field: subject_id
+mode: cluster
+seed: 5
+size: 24
+cluster_field: cluster
+checks:
+  - id: rate_band
+    type: rate_range
+    min: 0.3
+    max: 0.7
+  - id: keys_unique
+    type: key_unique
+  - id: keys_in_population
+    type: no_overlap

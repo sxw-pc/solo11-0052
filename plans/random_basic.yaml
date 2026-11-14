@@ -1,0 +1,17 @@
+plan_id: random-basic
+dataset:
+  path: ../fixtures/population_small.csv
+  format: csv
+key_field: subject_id
+mode: random
+seed: 7
+size: 7
+checks:
+  - id: rate_band
+    type: rate_range
+    min: 0.2
+    max: 0.3
+  - id: keys_unique
+    type: key_unique
+  - id: keys_in_population
+    type: no_overlap
