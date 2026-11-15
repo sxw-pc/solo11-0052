@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from typing import Any, Iterable
+
+UNCLASSIFIED_STRATUM = "unclassified"
+ALL_STRATUM = "all"
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -78,13 +82,74 @@ def task_id(plan: dict[str, Any], population_hash: str) -> str:
     return sha256_text(material)[:16]
 
 
+def _strata_status(added: int, missing: int) -> str:
+    if added and missing:
+        return "mixed"
+    if added:
+        return "added"
+    if missing:
+        return "missing"
+    return "clean"
+
+
+def strata_breakdown(
+    added: list[str],
+    missing: list[str],
+    *,
+    strata_field: str | None,
+    added_strata: Mapping[str, str] | None = None,
+    missing_strata: Mapping[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Attribute every diff key to a stratum; no key is ever dropped.
+
+    Keys absent from the lookup maps land in the explicit ``unclassified``
+    stratum so per-stratum counts always sum to the top-level diff counts.
+    Without a ``strata_field`` the breakdown degrades to a single group
+    covering the whole diff.
+    """
+    if not strata_field:
+        return [
+            {
+                "stratum": ALL_STRATUM,
+                "status": _strata_status(len(added), len(missing)),
+                "added": len(added),
+                "missing": len(missing),
+            }
+        ]
+    buckets: dict[str, dict[str, int]] = {}
+    for key in added:
+        name = (added_strata or {}).get(key, UNCLASSIFIED_STRATUM)
+        buckets.setdefault(name, {"added": 0, "missing": 0})["added"] += 1
+    for key in missing:
+        name = (missing_strata or {}).get(key, UNCLASSIFIED_STRATUM)
+        buckets.setdefault(name, {"added": 0, "missing": 0})["missing"] += 1
+    return [
+        {
+            "stratum": name,
+            "status": _strata_status(counts["added"], counts["missing"]),
+            "added": counts["added"],
+            "missing": counts["missing"],
+        }
+        for name, counts in sorted(
+            buckets.items(), key=lambda item: item[0].encode("utf-8")
+        )
+    ]
+
+
 def key_diff(
     baseline: Iterable[str],
     current: Iterable[str],
     *,
     limit: int = 20,
+    strata_field: str | None = None,
+    added_strata: Mapping[str, str] | None = None,
+    missing_strata: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Locate added/missing sample keys, capped for terminal readability."""
+    """Locate added/missing sample keys, capped for terminal readability.
+
+    ``by_strata`` is computed from the complete diff sets, never from the
+    truncated display lists.
+    """
     left = set(baseline)
     right = set(current)
     added = sorted(right - left, key=lambda key: key.encode("utf-8"))
@@ -97,4 +162,11 @@ def key_diff(
         "added_count": len(added),
         "missing_count": len(missing),
         "truncated": len(added) + len(missing) > len(shown_added) + len(shown_missing),
+        "by_strata": strata_breakdown(
+            added,
+            missing,
+            strata_field=strata_field,
+            added_strata=added_strata,
+            missing_strata=missing_strata,
+        ),
     }

@@ -105,6 +105,7 @@ checks:
 - `sample_fingerprint_ordered`：按抽样器输出顺序哈希，额外约束抽样顺序。
 - `task_id`：由规范化方案内容、总体指纹与生效种子派生，同一输入重跑稳定。
 - `verify` 以同 `plan_id` 最近一次台账记录为基线；指纹一致输出 `REPRODUCIBLE`，否则输出 `NOT_REPRODUCIBLE` 并列出最多 20 条新增/缺失样本键及总数。
+- `verify` 另输出顶层 `by_strata`：把完整差异集（不受 20 条截断影响）按分层归因——新增键取当前方案 `strata_field` 在本次数据集中的取值，缺失键用台账保存的基线方案副本恢复 path/format/key_field/strata_field 并重新加载基线数据集取值；找不到行的键归入显式 `unclassified`，无 `strata_field` 时退化为单条 `all` 分组。各层 `added`/`missing` 之和分别等于顶层 `added_count`/`missing_count`。
 
 ## 本地台账与 HTTP 只读入口
 

@@ -59,7 +59,10 @@ def explain_plan_warnings(warnings: list[dict[str, Any]]) -> list[dict[str, Any]
     ]
 
 
-def explain_sample_diff(diff: dict[str, Any]) -> list[str]:
+def explain_sample_diff(
+    diff: dict[str, Any],
+    by_strata: list[dict[str, Any]] | None = None,
+) -> list[str]:
     """Produce short human-readable locality lines for reproducibility diffs."""
     lines: list[str] = []
     if diff.get("added_count"):
@@ -68,6 +71,12 @@ def explain_sample_diff(diff: dict[str, Any]) -> list[str]:
     if diff.get("missing_count"):
         shown = ", ".join(diff.get("missing", []))
         lines.append(f"缺失样本 {diff['missing_count']} 个: {shown}")
+    for entry in by_strata or []:
+        if not (entry.get("added") or entry.get("missing")):
+            continue
+        lines.append(
+            f"分层 {entry['stratum']}: 新增 {entry['added']} 个, 缺失 {entry['missing']} 个"
+        )
     if diff.get("truncated"):
         lines.append("差异条目已截断，仅展示前 20 条")
     return lines

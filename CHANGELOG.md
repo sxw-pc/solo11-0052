@@ -3,6 +3,17 @@
 All notable changes to this project are documented here. The project follows
 Semantic Versioning.
 
+## Unreleased
+
+- `verify` output gains a top-level `by_strata` breakdown: added/missing
+  sample keys are attributed to strata over the complete diff sets (never the
+  truncated display lists). Added keys resolve via the current dataset and
+  plan `strata_field`; missing keys resolve via the baseline dataset restored
+  from the ledger's plan copy. Keys without a matching row fall into an
+  explicit `unclassified` stratum, plans without `strata_field` degrade to a
+  single `all` group, and per-stratum counts always sum to the top-level
+  `added_count`/`missing_count`. `diff_explanations` gains per-stratum lines.
+
 ## 0.1.0 - 2026-11-14
 
 - Initial release of the local, offline sampling attestation tool.

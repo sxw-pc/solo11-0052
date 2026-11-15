@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from .codes import VERIFY_NO_BASELINE, VERIFY_NOT_REPRODUCIBLE
 from .dataset_loader import Dataset, load_dataset
 from .explain import explain_sample_diff
@@ -129,6 +131,71 @@ def run_plan(
     )
 
 
+def _strata_map(dataset: Dataset, field: str, keys: set[str]) -> dict[str, str]:
+    """Resolve stratum values for the given keys from a loaded dataset."""
+    mapping: dict[str, str] = {}
+    for key in keys:
+        index = dataset.key_to_row.get(key)
+        if index is None:
+            continue
+        value = dataset.rows[index].get(field)
+        if value:
+            mapping[key] = value
+    return mapping
+
+
+def _baseline_strata_map(
+    prepared: Prepared,
+    baseline: dict[str, Any],
+    missing_keys: set[str],
+) -> dict[str, str]:
+    """Look up baseline-only keys in the baseline dataset.
+
+    The baseline plan copy stored in the ledger supplies the dataset
+    path/format/key_field/strata_field; relative dataset paths resolve
+    against the current plan file's directory. Keys that no longer have a
+    row stay unmapped so they surface as ``unclassified``.
+    """
+    baseline_plan = yaml.safe_load(baseline["plan_yaml"]) or {}
+    if not isinstance(baseline_plan, dict):
+        return {}
+    strata_field = baseline_plan.get("strata_field")
+    dataset_info = baseline_plan.get("dataset") or {}
+    key_field = baseline_plan.get("key_field")
+    if not (strata_field and key_field and dataset_info.get("path")):
+        return {}
+    dataset_path = Path(dataset_info["path"])
+    if not dataset_path.is_absolute():
+        dataset_path = (prepared.loaded.path.parent / dataset_path).resolve()
+    baseline_dataset = load_dataset(dataset_path, dataset_info.get("format"), key_field)
+    return _strata_map(baseline_dataset, str(strata_field), missing_keys)
+
+
+def _diff_strata_maps(
+    prepared: Prepared,
+    baseline: dict[str, Any],
+    current_keys: list[str],
+) -> tuple[dict[str, str] | None, dict[str, str] | None]:
+    """Build per-key stratum lookups for both sides of the diff.
+
+    Added keys resolve against the current run's dataset and plan
+    ``strata_field``; missing keys resolve against the baseline dataset
+    restored from the ledger's plan copy. Returns ``(None, None)`` when the
+    current plan declares no ``strata_field`` (single-group degradation).
+    """
+    strata_field = prepared.plan.get("strata_field")
+    if not strata_field:
+        return None, None
+    baseline_keys = set(baseline["sample_keys"])
+    current_set = set(current_keys)
+    added_strata = _strata_map(prepared.dataset, str(strata_field), current_set - baseline_keys)
+    missing_keys = baseline_keys - current_set
+    missing_strata: dict[str, str] = {}
+    if missing_keys:
+        missing_strata = _baseline_strata_map(prepared, baseline, missing_keys)
+    return added_strata, missing_strata
+
+
 def verify_plan(
     plan_path: str | Path,
     *,
@@ -145,7 +212,15 @@ def verify_plan(
             f"台账中没有 plan_id={prepared.loaded.plan_id} 的历史记录",
             plan_id=prepared.loaded.plan_id,
         )
-    diff = key_diff(baseline["sample_keys"], sample.selected)
+    added_strata, missing_strata = _diff_strata_maps(prepared, baseline, sample.selected)
+    diff = key_diff(
+        baseline["sample_keys"],
+        sample.selected,
+        strata_field=prepared.plan.get("strata_field"),
+        added_strata=added_strata,
+        missing_strata=missing_strata,
+    )
+    by_strata = diff.pop("by_strata")
     reproducible = current_fp == baseline["sample_fingerprint"]
     fingerprints = sample_fingerprints(sample.selected)
     return {
@@ -160,5 +235,6 @@ def verify_plan(
         "fingerprints": fingerprints,
         "sample_count": len(sample.selected),
         "diff": diff,
-        "diff_explanations": explain_sample_diff(diff),
+        "by_strata": by_strata,
+        "diff_explanations": explain_sample_diff(diff, by_strata),
     }
