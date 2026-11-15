@@ -25,17 +25,30 @@ def _status(observed: Any, expected: Any, location: str, message: str) -> CheckR
     return CheckResult("", "", "pass", None, message, observed, expected, location)
 
 
+def _selected_group_counts(
+    dataset: Dataset, result: SampleResult, field_name: str
+) -> dict[str, int]:
+    """Count selected keys per group value.
+
+    In subject mode the sampler only ever returns attribution-row keys, so the
+    attribution row's value on the grouping field is the subject's unique
+    declared group; non-attribution rows never enter the sample.
+    """
+    counts: dict[str, int] = {}
+    for key in result.selected:
+        row = dataset.rows[dataset.key_to_row[key]]
+        value = str(row.get(field_name, ""))
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
 def _quota_check(
     check: dict[str, Any], plan: dict[str, Any], dataset: Dataset, result: SampleResult
 ) -> CheckResult:
     rule_id = check["id"]
     field_name = plan.get("strata_field", "")
     expected = dict(plan.get("expected_distribution") or {})
-    counts: dict[str, int] = {}
-    for key in result.selected:
-        row = dataset.rows[dataset.key_to_row[key]]
-        value = str(row.get(field_name, ""))
-        counts[value] = counts.get(value, 0) + 1
+    counts = _selected_group_counts(dataset, result, field_name)
     entries: list[dict[str, Any]] = []
     shortfalls = 0
     overs = 0
@@ -129,11 +142,10 @@ def _coverage_check(
         declared = sorted({str(row.get(field_name, "")) for row in dataset.rows})
     declared = byte_sorted(str(group) for group in declared)
     counts: dict[str, int] = {group: 0 for group in declared}
-    for key in result.selected:
-        row = dataset.rows[dataset.key_to_row[key]]
-        group = str(row.get(field_name, ""))
+    selected_counts = _selected_group_counts(dataset, result, field_name)
+    for group, count in selected_counts.items():
         if group in counts:
-            counts[group] += 1
+            counts[group] += count
     entries: list[dict[str, Any]] = []
     missing: list[str] = []
     minimum_only: list[str] = []

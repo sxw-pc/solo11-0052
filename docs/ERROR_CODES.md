@@ -33,6 +33,8 @@
 | `DATASET_MISSING_KEY_FIELD` | error | CSV 表头/JSONL 行缺少主键字段 | `dataset.<key_field>` |
 | `DATASET_MISSING_KEY` | error | 主键为空或不是标量 | `dataset.<key_field>`，含行号 |
 | `DATASET_DUPLICATE_KEY` | error | 主键重复 | `dataset.<key_field>`，含当前/前次行号 |
+| `DATASET_MISSING_SUBJECT_FIELD` | error | 声明了 `subject_field` 但 CSV 表头无该列 | `dataset.<subject_field>` |
+| `DATASET_MISSING_SUBJECT` | error | 主体字段取值为空（JSONL 无表头时也用于缺列行） | `dataset.<subject_field>`，含行号 |
 | `DATASET_BLANK_LINE` | warning | 空行被跳过 | `dataset.line`，含行号 |
 
 ## 抽样

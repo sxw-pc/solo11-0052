@@ -63,6 +63,15 @@ def cluster_dataset():
 
 
 @pytest.fixture
+def subject_dataset():
+    from sample_attest.dataset_loader import load_dataset
+
+    return load_dataset(
+        ROOT / "fixtures" / "population_subjects.csv", "csv", "record_id", "subject_id"
+    )
+
+
+@pytest.fixture
 def base_plan():
     return {
         "plan_id": "p-test",

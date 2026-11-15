@@ -1,0 +1,16 @@
+record_id,subject_id,region,segment,amount
+rec_0001,sub_001,region_A,segment_high,12
+rec_0002,sub_001,region_B,segment_mid,18
+rec_0003,sub_002,region_A,segment_low,24
+rec_0004,sub_003,region_A,segment_high,30
+rec_0005,sub_004,region_B,segment_low,36
+rec_0006,sub_004,region_C,segment_mid,42
+rec_0007,sub_005,region_B,segment_high,48
+rec_0008,sub_006,region_C,segment_low,54
+rec_0009,sub_007,region_C,segment_high,60
+rec_0010,sub_008,region_A,segment_mid,66
+rec_0011,sub_008,region_B,segment_low,72
+rec_0012,sub_008,region_C,segment_high,78
+rec_0013,sub_009,region_B,segment_mid,84
+rec_0014,sub_010,region_C,segment_low,90
+rec_0015,sub_011,region_A,segment_high,96

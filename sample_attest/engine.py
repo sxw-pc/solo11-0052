@@ -68,7 +68,12 @@ def utc_now(clock: str | datetime | None = None) -> str:
 
 def prepare(plan_path: str | Path) -> Prepared:
     loaded = load_plan(plan_path)
-    dataset = load_dataset(loaded.dataset_path, loaded.data["dataset"]["format"], loaded.data["key_field"])
+    dataset = load_dataset(
+        loaded.dataset_path,
+        loaded.data["dataset"]["format"],
+        loaded.data["key_field"],
+        loaded.data.get("subject_field"),
+    )
     seed = effective_seed(
         int(loaded.data["seed"]), str(loaded.data["mode"]), dataset.population_fingerprint
     )

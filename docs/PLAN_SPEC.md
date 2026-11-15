@@ -18,6 +18,7 @@
 | `size` | integer | 条件 | 与 `rate` 二选一，必须 `> 0` | 全部 |
 | `rate` | number | 条件 | 与 `size` 二选一，`0 < rate <= 1` | 全部 |
 | `strata_field` | string | 条件 | 非空，字段应存在于数据集 | 仅 `stratified` |
+| `subject_field` | string | 否 | 非空，字段应存在于数据集；仅可与 `stratified` 同用 | 仅 `stratified` |
 | `cluster_field` | string | 条件 | 非空，字段应存在于数据集 | 仅 `cluster` |
 | `expected_distribution` | mapping | 否 | `分层名 -> 非负整数`，非空 | 仅 `stratified` |
 | `checks` | list | 是 | 非空映射列表，规则 `id` 唯一 | 全部 |
@@ -66,8 +67,13 @@
 - `rate` 的目标量为 `ceil(N * rate)`；`rate == 1` 时返回全部记录。
 - 系统抽样：`k = floor(N / n)`；起点由生效种子决定；越界回绕一次；重复位置剔除并警告。
 - 分层抽样未声明配额时，用最大余数法按组规模分配目标量；并列按分层名的 UTF-8 字节序决定。
+- 声明 `subject_field` 时，业务主体身份由该字段定义，同一主体可在数据集中以多行出现（每行一个分层取值），但 `key_field` 仍须全表唯一：
+  - 每个主体先确定其在 `strata_field` 上的唯一归属层：取该主体全部行中 `key_field` 最小（UTF-8 字节序）的一行作为归属行，归属行的分层值即主体归属层；其余行保留在总体中但不参与配额消耗。该选择与源文件行序无关。
+  - 配额按主体计数而非原始行计数：各层规模为归属到该层的主体数；`STRATUM_QUOTA_SHORT` 的缺口按主体数给出，样本总数不超过 `size`。
+  - 入选样本按主体去重，每个入选主体仅输出其归属行的键；报告 `metadata.quotas` 为各层实际入选主体数，其合计恒等于样本数。
+  - 不声明 `subject_field` 时分层抽样逐行进行，行为与旧版本完全一致；无论是否声明，总体行的键唯一性与 `population_fingerprint`（全量行键的排序哈希）语义不变。
 - 整群抽样为一阶段整群、群内全取；当前版本不支持群内二次抽样。
-- 数据集必须非空、主键必须存在且唯一；空值只统计不剔除。
+- 数据集必须非空、主键必须存在且唯一；空值只统计不剔除。声明 `subject_field` 时，主体字段必须存在且每个取值非空，但取值允许重复；缺失主体字段返回 `DATASET_MISSING_SUBJECT_FIELD`（CSV 表头级），空主体值返回 `DATASET_MISSING_SUBJECT`（行级）。
 
 ## 完整示例
 

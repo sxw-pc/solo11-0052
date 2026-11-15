@@ -3,6 +3,19 @@
 All notable changes to this project are documented here. The project follows
 Semantic Versioning.
 
+## Unreleased
+
+- Add optional `subject_field` to stratified plans. When declared, business
+  subjects are identified by that field and may appear on multiple rows with
+  different `strata_field` values; each subject is attributed to a single
+  stratum via its smallest-key row, quotas count subjects rather than rows,
+  and the selected sample is deduplicated per subject.
+- Subject identity values may repeat across rows (no longer treated as errors
+  apart from key conflicts), while `key_field` uniqueness and the
+  `population_fingerprint` roster semantics are unchanged. New dataset error
+  codes `DATASET_MISSING_SUBJECT_FIELD` and `DATASET_MISSING_SUBJECT`.
+- Plans without `subject_field` keep byte-identical behavior and outputs.
+
 ## 0.1.0 - 2026-11-14
 
 - Initial release of the local, offline sampling attestation tool.

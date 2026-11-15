@@ -13,6 +13,8 @@ from sample_attest.codes import (
     DATASET_INVALID_FORMAT,
     DATASET_MISSING_KEY,
     DATASET_MISSING_KEY_FIELD,
+    DATASET_MISSING_SUBJECT,
+    DATASET_MISSING_SUBJECT_FIELD,
     DATASET_PARSE_ERROR,
 )
 from sample_attest.dataset_loader import DatasetLoadError, load_dataset
@@ -180,3 +182,106 @@ def test_invalid_format_and_missing_file(tmp_path):
     with pytest.raises(DatasetLoadError) as exc:
         load(tmp_path / "absent.csv")
     assert DATASET_FILE_NOT_FOUND in error_codes(exc)
+
+
+def test_subject_duplicates_allowed_but_keys_stay_unique(tmp_path):
+    path = write_csv(
+        tmp_path,
+        "record_id,subject_id,region\n"
+        "rec_0001,sub_001,region_A\n"
+        "rec_0002,sub_001,region_B\n"
+        "rec_0003,sub_002,region_A\n",
+        name="subjects.csv",
+    )
+    loaded = load_dataset(path, "csv", "record_id", "subject_id")
+    assert loaded.row_count == 3
+    assert loaded.subject_field == "subject_id"
+    assert loaded.subject_counts == {"sub_001": 2, "sub_002": 1}
+    assert loaded.metadata()["subject_count"] == 2
+    # roster fingerprint keeps its key-roster semantics
+    from sample_attest.fingerprint import population_fingerprint
+    assert loaded.population_fingerprint == population_fingerprint(
+        ["rec_0001", "rec_0002", "rec_0003"]
+    )
+
+
+def test_subject_duplicates_do_not_break_default_load(tmp_path):
+    path = write_csv(
+        tmp_path,
+        "record_id,subject_id\nrec_0001,sub_001\nrec_0002,sub_001\n",
+        name="subjects.csv",
+    )
+    loaded = load_dataset(path, "csv", "record_id")
+    assert loaded.row_count == 2
+    assert loaded.subject_field is None
+    assert "subject_count" not in loaded.metadata()
+
+
+def test_missing_subject_field_header(tmp_path):
+    path = write_csv(
+        tmp_path,
+        "record_id,region\nrec_0001,region_A\n",
+        name="subjects.csv",
+    )
+    with pytest.raises(DatasetLoadError) as exc:
+        load_dataset(path, "csv", "record_id", "subject_id")
+    assert DATASET_MISSING_SUBJECT_FIELD in error_codes(exc)
+
+
+def test_blank_subject_value_is_an_error(tmp_path):
+    path = write_csv(
+        tmp_path,
+        "record_id,subject_id\nrec_0001,sub_001\nrec_0002,\n",
+        name="subjects.csv",
+    )
+    with pytest.raises(DatasetLoadError) as exc:
+        load_dataset(path, "csv", "record_id", "subject_id")
+    assert DATASET_MISSING_SUBJECT in error_codes(exc)
+    missing = [e for e in exc.value.errors if e["code"] == DATASET_MISSING_SUBJECT][0]
+    assert missing["line"] == 3
+
+
+def test_subject_duplicates_allowed_in_jsonl(tmp_path):
+    path = tmp_path / "subjects.jsonl"
+    path.write_text(
+        '{"record_id":"rec_0001","subject_id":"sub_001","region":"region_A"}\n'
+        '{"record_id":"rec_0002","subject_id":"sub_001","region":"region_B"}\n',
+        encoding="utf-8",
+    )
+    loaded = load_dataset(path, "jsonl", "record_id", "subject_id")
+    assert loaded.row_count == 2
+    assert loaded.subject_counts == {"sub_001": 2}
+    # JSONL has no fixed header: rows lacking the subject field surface as
+    # per-row missing-subject errors, while CSV raises the header-level code.
+    missing = tmp_path / "no_subject.jsonl"
+    missing.write_text(
+        '{"record_id":"rec_0001"}\n{"record_id":"rec_0002"}\n', encoding="utf-8"
+    )
+    with pytest.raises(DatasetLoadError) as exc:
+        load_dataset(missing, "jsonl", "record_id", "subject_id")
+    assert all(code == DATASET_MISSING_SUBJECT for code in error_codes(exc))
+    # a file that has the field name but a blank/null value on one row
+    blank = tmp_path / "blank_subject.jsonl"
+    blank.write_text(
+        '{"record_id":"rec_0001","subject_id":"sub_001"}\n'
+        '{"record_id":"rec_0002","subject_id":null}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(DatasetLoadError) as exc:
+        load_dataset(blank, "jsonl", "record_id", "subject_id")
+    assert DATASET_MISSING_SUBJECT in error_codes(exc)
+
+
+def test_jsonl_subject_field_absent_reports_per_row(tmp_path):
+    # JSONL has no header: valid key rows that omit the subject field surface
+    # one located per-row DATASET_MISSING_SUBJECT error each.
+    path = tmp_path / "no_subject_col.jsonl"
+    path.write_text(
+        '{"record_id":"rec_0001","region":"region_A"}\n'
+        '{"record_id":"rec_0002","region":"region_B"}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(DatasetLoadError) as exc:
+        load_dataset(path, "jsonl", "record_id", "subject_id")
+    assert error_codes(exc) == [DATASET_MISSING_SUBJECT, DATASET_MISSING_SUBJECT]
+    assert [e.get("line") for e in exc.value.errors] == [1, 2]

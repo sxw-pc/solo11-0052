@@ -12,6 +12,7 @@ from sample_attest.codes import (
     PLAN_BAD_RANGE,
     PLAN_CONFLICT,
     PLAN_DUPLICATE_CHECK_ID,
+    PLAN_FIELD_NOT_APPLICABLE,
     PLAN_FILE_NOT_FOUND,
     PLAN_MISSING_FIELD,
     PLAN_PARSE_ERROR,
@@ -128,6 +129,38 @@ def test_quota_sum_mismatch_warns(base_plan):
     result = validate_plan(raw)
     assert result.ok
     assert PLAN_QUOTA_SUM_MISMATCH in [item["code"] for item in result.warnings]
+
+
+def test_subject_field_accepted_for_stratified(base_plan):
+    raw = copy.deepcopy(base_plan)
+    raw["mode"] = "stratified"
+    raw["strata_field"] = "region"
+    raw["subject_field"] = "entity_id"
+    result = validate_plan(raw)
+    assert result.ok
+    assert result.plan["subject_field"] == "entity_id"
+
+
+def test_subject_field_blank_is_type_error(base_plan):
+    raw = copy.deepcopy(base_plan)
+    raw["mode"] = "stratified"
+    raw["strata_field"] = "region"
+    raw["subject_field"] = "   "
+    result = validate_plan(raw)
+    assert PLAN_TYPE_ERROR in codes(result)
+    assert any(item["path"] == "plan.subject_field" for item in result.errors)
+
+
+@pytest.mark.parametrize("mode", ["random", "systematic", "cluster"])
+def test_subject_field_not_applicable_outside_stratified(base_plan, mode):
+    raw = copy.deepcopy(base_plan)
+    raw["mode"] = mode
+    raw["subject_field"] = "entity_id"
+    if mode == "cluster":
+        raw["cluster_field"] = "cluster_id"
+    result = validate_plan(raw)
+    assert PLAN_FIELD_NOT_APPLICABLE in codes(result)
+    assert any(item["path"] == "plan.subject_field" for item in result.errors)
 
 
 def test_load_real_plan_relative_dataset():

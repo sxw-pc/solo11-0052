@@ -91,7 +91,7 @@ checks:
 | 模式 | 约束与行为 |
 |---|---|
 | `random` | 对按字节序排序的主键执行显式播种 Fisher–Yates，取 `size` 或 `ceil(N * rate)`。 |
-| `stratified` | 必须声明 `strata_field`；声明确切配额时按配额取，配额不足发 `STRATUM_QUOTA_SHORT` 警告且不静默补齐；未声明配额时按最大余数法分配目标量。 |
+| `stratified` | 必须声明 `strata_field`；声明确切配额时按配额取，配额不足发 `STRATUM_QUOTA_SHORT` 警告且不静默补齐；未声明配额时按最大余数法分配目标量。可选声明 `subject_field`：同一主体可跨多行出现，先按最小主键行确定其唯一归属层，再按主体配额抽取并按主体去重。 |
 | `systematic` | 字节序总体、间隔 `k = floor(N / n)`、起点由生效种子决定、等步长取键；越界回绕一次并剔除重复位置。 |
 | `cluster` | 必须声明 `cluster_field`；先按种子打乱群顺序，再整群纳入直至达到目标行数。末群可导致超出目标，发 `CLUSTER_OVERSHOOT` 警告。 |
 
@@ -149,7 +149,7 @@ archive/
 | 类别 | 代码 |
 |---|---|
 | 方案加载/校验 | `PLAN_FILE_NOT_FOUND` `PLAN_PARSE_ERROR` `PLAN_NOT_MAPPING` `PLAN_MISSING_FIELD` `PLAN_TYPE_ERROR` `PLAN_BAD_RANGE` `PLAN_UNKNOWN_FIELD` `PLAN_UNKNOWN_MODE` `PLAN_CONFLICT` `PLAN_FIELD_NOT_APPLICABLE` `PLAN_BAD_CHECK` `PLAN_DUPLICATE_CHECK_ID` `PLAN_QUOTA_SUM_MISMATCH` `PLAN_INVALID` |
-| 数据集 | `DATASET_FILE_NOT_FOUND` `DATASET_INVALID_FORMAT` `DATASET_ENCODING_ERROR` `DATASET_PARSE_ERROR` `DATASET_EMPTY` `DATASET_MISSING_KEY_FIELD` `DATASET_MISSING_KEY` `DATASET_DUPLICATE_KEY` `DATASET_BLANK_LINE` |
+| 数据集 | `DATASET_FILE_NOT_FOUND` `DATASET_INVALID_FORMAT` `DATASET_ENCODING_ERROR` `DATASET_PARSE_ERROR` `DATASET_EMPTY` `DATASET_MISSING_KEY_FIELD` `DATASET_MISSING_KEY` `DATASET_DUPLICATE_KEY` `DATASET_MISSING_SUBJECT_FIELD` `DATASET_MISSING_SUBJECT` `DATASET_BLANK_LINE` |
 | 抽样 | `SAMPLE_EMPTY_POPULATION` `SAMPLE_TARGET_ZERO` `SAMPLE_SIZE_EXCEEDS_POPULATION` `SAMPLE_DUPLICATE_POSITION` `SAMPLE_SYSTEMATIC_WRAP` `SAMPLE_EMPTY_STRATUM` `SAMPLE_MISSING_STRATUM_VALUE` `STRATUM_QUOTA_SHORT` `STRATUM_GROUP_MISSING` `STRATUM_UNPLANNED_GROUP` `SAMPLE_EMPTY_CLUSTER` `SAMPLE_MISSING_CLUSTER_VALUE` `CLUSTER_OVERSHOOT` |
 | 核验 | `CHECK_QUOTA_SHORT` `CHECK_QUOTA_OVER` `CHECK_RATE_OUT_OF_RANGE` `CHECK_RATE_AT_BOUNDARY` `CHECK_COVERAGE_MISSING` `CHECK_COVERAGE_MINIMUM_ONLY` `CHECK_DUPLICATE_KEY` `CHECK_KEY_OUTSIDE_POPULATION` `CHECK_EMPTY_SAMPLE` `CHECK_FIELD_NOT_FOUND` `VERIFY_NO_BASELINE` `VERIFY_NOT_REPRODUCIBLE` |
 | 台账/归档/服务 | `LEDGER_ERROR` `LEDGER_TASK_NOT_FOUND` `ARCHIVE_TASK_NOT_FOUND` `ARCHIVE_MANIFEST_INVALID` `ARCHIVE_MISSING_FILE` `ARCHIVE_HASH_MISMATCH` `SERVER_METHOD_NOT_ALLOWED` `IO_ERROR` |
@@ -158,13 +158,13 @@ CLI 退出码：`0` 成功/可复现；`1` 核验失败；`2` 用法或加载错
 
 ## 测试与实测覆盖率
 
-当前仓库包含 **110 个 pytest 用例**。测试 fixture 通过 autouse `monkeypatch` 将 `socket.socket` 与 `socket.create_connection` 替换为抛异常的桩，因此整个测试集运行期不会发起网络连接。为避开环境预装插件在事件循环 self-pipe 中创建本地 socket，`pyproject.toml` 的 pytest 配置显式禁用了无关的 `pytest-sanic` 插件。
+当前仓库包含 **130 个 pytest 用例**。测试 fixture 通过 autouse `monkeypatch` 将 `socket.socket` 与 `socket.create_connection` 替换为抛异常的桩，因此整个测试集运行期不会发起网络连接。为避开环境预装插件在事件循环 self-pipe 中创建本地 socket，`pyproject.toml` 的 pytest 配置显式禁用了无关的 `pytest-sanic` 插件。
 
 实测（Python 3.13 / Windows 11）：
 
 ```text
 pytest -q
-110 passed
+130 passed
 
 pytest -q --cov=sample_attest
 TOTAL ... 88%   （branch 覆盖；目标 ≥80%）
@@ -180,8 +180,8 @@ sample_attest/           # Python 包
   verifier*.py           # 核验与归因
   ledger.py / archive.py # 台账与归档
   server.py              # 只读 Flask
-plans/                   # 四个示例方案
-fixtures/                # 三份合成数据
-tests/                   # 110 个离线测试
+plans/                   # 示例方案（含主体分层 stratified_subject_*）
+fixtures/                # 合成数据（含跨层多主体 population_subjects.csv）
+tests/                   # 130 个离线测试
 docs/                    # 方案规范、错误码、归档布局
 ```

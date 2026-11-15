@@ -181,3 +181,41 @@ def test_strict_mode_turns_warning_into_failure(stratified_dataset):
     strict = run_checks(plan, stratified_dataset, sample(selected[:15]), strict=True)
     assert strict.status == "fail"
     assert strict.strict_failed is True
+
+
+def test_quota_check_counts_subjects_by_attribution_stratum(subject_dataset):
+    # sub_001 (rec_0001/rec_0002) attributes to region_A via its smallest key;
+    # sub_004 (rec_0005/rec_0006) attributes to region_B; sub_008 to region_A.
+    plan = {
+        "plan_id": "verify-subject",
+        "strata_field": "region",
+        "subject_field": "subject_id",
+        "expected_distribution": {"region_A": 3, "region_B": 1, "region_C": 1},
+        "checks": [{"id": "q", "type": "quota"}],
+    }
+    selected = ["rec_0001", "rec_0003", "rec_0010", "rec_0005", "rec_0009"]
+    quota = check_by_type(
+        run_checks(plan, subject_dataset, sample(selected)), "quota"
+    )
+    assert quota.status == "pass"
+    assert quota.observed == {"region_A": 3, "region_B": 1, "region_C": 1}
+
+
+def test_quota_check_reports_subject_shortfall_gap(subject_dataset):
+    plan = {
+        "plan_id": "verify-subject-short",
+        "strata_field": "region",
+        "subject_field": "subject_id",
+        "expected_distribution": {"region_A": 5, "region_B": 3, "region_C": 4},
+        "checks": [{"id": "q", "type": "quota"}],
+    }
+    selected = ["rec_0001", "rec_0003", "rec_0004", "rec_0010", "rec_0015",
+                "rec_0005", "rec_0007", "rec_0013", "rec_0009", "rec_0008", "rec_0014"]
+    quota = check_by_type(
+        run_checks(plan, subject_dataset, sample(selected)), "quota"
+    )
+    assert quota.status == "fail"
+    assert quota.code == CHECK_QUOTA_SHORT
+    assert len(quota.entries) == 1
+    assert quota.entries[0]["path"] == "stratum:region_C"
+    assert quota.entries[0]["gap"] == 1

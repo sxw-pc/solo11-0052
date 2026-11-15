@@ -11,6 +11,8 @@ from .codes import (
     DATASET_FILE_NOT_FOUND,
     DATASET_INVALID_FORMAT,
     DATASET_MISSING_KEY,
+    DATASET_MISSING_SUBJECT,
+    DATASET_MISSING_SUBJECT_FIELD,
 )
 from .fingerprint import population_fingerprint
 
@@ -27,6 +29,8 @@ class Dataset:
     blank_value_rows: int
     warnings: list[dict[str, Any]] = field(default_factory=list)
     key_to_row: dict[str, int] = field(default_factory=dict)
+    subject_field: str | None = None
+    subject_counts: dict[str, int] = field(default_factory=dict)
 
     @property
     def row_count(self) -> int:
@@ -37,7 +41,7 @@ class Dataset:
         return set(self.keys)
 
     def metadata(self) -> dict[str, Any]:
-        return {
+        data = {
             "path": self.path,
             "format": self.format,
             "row_count": self.row_count,
@@ -45,6 +49,10 @@ class Dataset:
             "population_fingerprint": self.population_fingerprint,
             "blank_value_rows": self.blank_value_rows,
         }
+        if self.subject_field:
+            data["subject_field"] = self.subject_field
+            data["subject_count"] = len(self.subject_counts)
+        return data
 
 
 class DatasetLoadError(Exception):
@@ -79,6 +87,7 @@ def _finalize(
     rows: list[dict[str, str]],
     fieldnames: list[str],
     warnings: list[dict[str, Any]],
+    subject_field: str | None = None,
 ) -> Dataset:
     keys = [row[key_field] for row in rows]
     blank_value_rows = sum(
@@ -86,6 +95,12 @@ def _finalize(
     )
     ordered = sorted(keys, key=lambda k: k.encode("utf-8"))
     key_to_row = {row[key_field]: index for index, row in enumerate(rows)}
+    subject_counts: dict[str, int] = {}
+    if subject_field is not None:
+        for row in rows:
+            value = row.get(subject_field, "")
+            if value != "":
+                subject_counts[value] = subject_counts.get(value, 0) + 1
     return Dataset(
         path=str(path),
         format=fmt,
@@ -97,7 +112,27 @@ def _finalize(
         blank_value_rows=blank_value_rows,
         warnings=warnings,
         key_to_row=key_to_row,
+        subject_field=subject_field,
+        subject_counts=subject_counts,
     )
+
+
+def _register_subject(
+    row: dict[str, str],
+    line: int,
+    subject_field: str,
+    errors: list[dict[str, Any]],
+) -> None:
+    """Validate a subject identity value; repeated values are intentionally allowed."""
+    if row.get(subject_field, "") == "":
+        errors.append(
+            issue(
+                DATASET_MISSING_SUBJECT,
+                f"dataset.{subject_field}",
+                f"第 {line} 行缺少业务主体 {subject_field}",
+                line=line,
+            )
+        )
 
 
 def _register_row(
@@ -133,7 +168,12 @@ def _register_row(
     seen[key] = line
 
 
-def load_dataset(path: str | Path, fmt: str, key_field: str) -> Dataset:
+def load_dataset(
+    path: str | Path,
+    fmt: str,
+    key_field: str,
+    subject_field: str | None = None,
+) -> Dataset:
     dataset_path = Path(path)
     fmt = str(fmt).lower()
     if fmt not in ("csv", "jsonl"):
@@ -159,5 +199,5 @@ def load_dataset(path: str | Path, fmt: str, key_field: str) -> Dataset:
     from .dataset_readers import load_csv, load_jsonl
 
     if fmt == "csv":
-        return load_csv(dataset_path, key_field)
-    return load_jsonl(dataset_path, key_field)
+        return load_csv(dataset_path, key_field, subject_field)
+    return load_jsonl(dataset_path, key_field, subject_field)

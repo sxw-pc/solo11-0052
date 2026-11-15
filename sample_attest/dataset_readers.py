@@ -13,6 +13,7 @@ from .codes import (
     DATASET_ENCODING_ERROR,
     DATASET_MISSING_KEY,
     DATASET_MISSING_KEY_FIELD,
+    DATASET_MISSING_SUBJECT_FIELD,
     DATASET_PARSE_ERROR,
 )
 from .dataset_loader import (
@@ -20,12 +21,13 @@ from .dataset_loader import (
     DatasetLoadError,
     _finalize,
     _register_row,
+    _register_subject,
     issue,
     normalize_key,
 )
 
 
-def load_csv(path: Path, key_field: str) -> Dataset:
+def load_csv(path: Path, key_field: str, subject_field: str | None = None) -> Dataset:
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     rows: list[dict[str, str]] = []
@@ -57,6 +59,16 @@ def load_csv(path: Path, key_field: str) -> Dataset:
                         )
                     ]
                 )
+            if subject_field is not None and subject_field not in fieldnames:
+                raise DatasetLoadError(
+                    [
+                        issue(
+                            DATASET_MISSING_SUBJECT_FIELD,
+                            f"dataset.{subject_field}",
+                            f"数据集中不存在主体字段 {subject_field}",
+                        )
+                    ]
+                )
             seen: dict[str, int] = {}
             for raw_row in reader:
                 line = reader.line_num
@@ -82,6 +94,8 @@ def load_csv(path: Path, key_field: str) -> Dataset:
                     continue
                 row = dict(zip(fieldnames, raw_row, strict=True))
                 _register_row(row, line, key_field, seen, errors)
+                if subject_field is not None:
+                    _register_subject(row, line, subject_field, errors)
                 rows.append(row)
     except UnicodeDecodeError as exc:
         raise DatasetLoadError(
@@ -91,10 +105,10 @@ def load_csv(path: Path, key_field: str) -> Dataset:
         raise DatasetLoadError(errors)
     if not rows:
         raise DatasetLoadError([issue(DATASET_EMPTY, "dataset", "CSV 没有数据行")])
-    return _finalize(path, "csv", key_field, rows, fieldnames, warnings)
+    return _finalize(path, "csv", key_field, rows, fieldnames, warnings, subject_field)
 
 
-def load_jsonl(path: Path, key_field: str) -> Dataset:
+def load_jsonl(path: Path, key_field: str, subject_field: str | None = None) -> Dataset:
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     rows: list[dict[str, str]] = []
@@ -170,6 +184,8 @@ def load_jsonl(path: Path, key_field: str) -> Dataset:
                     continue
                 row[key_field] = key
                 _register_row(row, line, key_field, seen, errors)
+                if subject_field is not None:
+                    _register_subject(row, line, subject_field, errors)
                 rows.append(row)
     except UnicodeDecodeError as exc:
         raise DatasetLoadError(
@@ -179,6 +195,6 @@ def load_jsonl(path: Path, key_field: str) -> Dataset:
         raise DatasetLoadError(errors)
     if not rows:
         raise DatasetLoadError([issue(DATASET_EMPTY, "dataset", "JSONL 没有数据行")])
-    return _finalize(path, "jsonl", key_field, rows, fieldnames, warnings)
+    return _finalize(path, "jsonl", key_field, rows, fieldnames, warnings, subject_field)
 
 

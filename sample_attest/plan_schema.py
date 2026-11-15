@@ -30,6 +30,7 @@ TOP_LEVEL_FIELDS = frozenset(
         "size",
         "rate",
         "strata_field",
+        "subject_field",
         "cluster_field",
         "expected_distribution",
         "checks",
@@ -210,7 +211,7 @@ def validate_plan(raw: Any) -> ValidationResult:
                     expected[group] = count
             normalized["expected_distribution"] = expected
 
-    for field_name in ("strata_field", "cluster_field"):
+    for field_name in ("strata_field", "subject_field", "cluster_field"):
         if field_name in raw:
             value = raw[field_name]
             if not isinstance(value, str) or not value.strip():
@@ -229,7 +230,7 @@ def validate_plan(raw: Any) -> ValidationResult:
             issue(PLAN_MISSING_FIELD, "plan.cluster_field", "cluster 模式需要 cluster_field")
         )
     if mode in ("random", "systematic"):
-        for field_name in ("strata_field", "cluster_field", "expected_distribution"):
+        for field_name in ("strata_field", "subject_field", "cluster_field", "expected_distribution"):
             if field_name in raw:
                 errors.append(
                     issue(
@@ -242,10 +243,15 @@ def validate_plan(raw: Any) -> ValidationResult:
         errors.append(
             issue(PLAN_FIELD_NOT_APPLICABLE, "plan.cluster_field", "cluster_field 不适用于 stratified")
         )
-    if mode == "cluster" and "strata_field" in raw:
-        errors.append(
-            issue(PLAN_FIELD_NOT_APPLICABLE, "plan.strata_field", "strata_field 不适用于 cluster")
-        )
+    if mode == "cluster":
+        if "strata_field" in raw:
+            errors.append(
+                issue(PLAN_FIELD_NOT_APPLICABLE, "plan.strata_field", "strata_field 不适用于 cluster")
+            )
+        if "subject_field" in raw:
+            errors.append(
+                issue(PLAN_FIELD_NOT_APPLICABLE, "plan.subject_field", "subject_field 不适用于 cluster")
+            )
     if mode in ("stratified", "cluster") and "expected_distribution" in raw and mode != "stratified":
         errors.append(
             issue(

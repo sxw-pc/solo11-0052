@@ -11,6 +11,9 @@ from sample_attest.cli import main
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAN = ROOT / "plans" / "stratified_basic.yaml"
+SUBJECT_PLAN = ROOT / "plans" / "stratified_subject_basic.yaml"
+SUBJECT_SHORT_PLAN = ROOT / "plans" / "stratified_subject_short.yaml"
+SUBJECT_SEED2_PLAN = ROOT / "plans" / "stratified_subject_seed2.yaml"
 NOW = "2026-01-01T00:00:00Z"
 
 
@@ -155,3 +158,67 @@ def test_verify_archive_tamper_exit_code(tmp_path, capsys):
     assert main(["verify-archive", "--dir", str(archive)]) == 5
     result = parse_json(capsys.readouterr().out)
     assert result["errors"][0]["code"] == "ARCHIVE_HASH_MISMATCH"
+
+
+def test_subject_plan_dedupes_and_matches_quotas(tmp_path, capsys):
+    db = tmp_path / "subject.db"
+    out = tmp_path / "out"
+    code = main(["run", "--plan", str(SUBJECT_PLAN), "--out", str(out),
+                 "--db", str(db), "--now", NOW])
+    summary = parse_json(capsys.readouterr().out)
+    assert code == 0
+    report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    metadata = report["sample"]["metadata"]
+    assert metadata["subject_count"] == 11
+    assert metadata["subject_rows"] == 15
+    assert report["sample"]["count"] == 9
+    assert sum(metadata["quotas"].values()) == report["sample"]["count"]
+    # selected keys are attribution rows, one per distinct subject
+    fixture = (ROOT / "fixtures" / "population_subjects.csv").read_text(encoding="utf-8")
+    import csv as csv_module
+    rows = list(csv_module.DictReader(fixture.splitlines()))
+    key_to_subject = {row["record_id"]: row["subject_id"] for row in rows}
+    selected = report["sample"]["selected_keys_sorted"]
+    subjects = [key_to_subject[key] for key in selected]
+    assert len(subjects) == len(set(subjects))
+    assert summary["sample_fingerprint"] == report["sample"]["fingerprints"]["sample_fingerprint"]
+
+
+def test_subject_plan_quota_short_reports_real_gap(tmp_path, capsys):
+    db = tmp_path / "short.db"
+    out = tmp_path / "out-short"
+    code = main(["run", "--plan", str(SUBJECT_SHORT_PLAN), "--out", str(out),
+                 "--db", str(db), "--now", NOW])
+    assert code == 1
+    report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    short = [w for w in report["sample"]["warnings"] if w["code"] == "STRATUM_QUOTA_SHORT"]
+    assert len(short) == 1 and short[0]["gap"] == 1
+    assert report["sample"]["count"] == 11
+    assert sum(report["sample"]["metadata"]["quotas"].values()) == 11
+    gaps = [e["gap"] for e in report["explanations"] if e.get("gap") is not None]
+    assert gaps and all(gap == 1 for gap in gaps)
+
+
+def test_subject_plan_seed_change_changes_fingerprint(tmp_path, capsys):
+    db = tmp_path / "seed.db"
+    first_out = tmp_path / "out1"
+    second_out = tmp_path / "out2"
+    assert main(["run", "--plan", str(SUBJECT_PLAN), "--out", str(first_out),
+                 "--db", str(db), "--now", NOW]) == 0
+    capsys.readouterr()
+    assert main(["run", "--plan", str(SUBJECT_SEED2_PLAN), "--out", str(second_out),
+                 "--db", str(db), "--now", NOW]) == 0
+    capsys.readouterr()
+    first = json.loads((first_out / "report.json").read_text(encoding="utf-8"))
+    second = json.loads((second_out / "report.json").read_text(encoding="utf-8"))
+    fp_one = first["sample"]["fingerprints"]["sample_fingerprint"]
+    fp_two = second["sample"]["fingerprints"]["sample_fingerprint"]
+    assert fp_one != fp_two
+    assert first["sample"]["selected_keys_sorted"] != second["sample"]["selected_keys_sorted"]
+    # same seed rerun stays reproducible
+    rerun_out = tmp_path / "out3"
+    assert main(["run", "--plan", str(SUBJECT_PLAN), "--out", str(rerun_out),
+                 "--db", str(db), "--now", NOW]) == 0
+    capsys.readouterr()
+    rerun = json.loads((rerun_out / "report.json").read_text(encoding="utf-8"))
+    assert rerun["sample"]["fingerprints"]["sample_fingerprint"] == fp_one
