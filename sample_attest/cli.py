@@ -67,6 +67,11 @@ def _build_parser() -> argparse.ArgumentParser:
     export.add_argument("--out", required=True, help="归档输出目录")
     export.add_argument("--db", default=str(DEFAULT_DB), help="SQLite 台账路径")
     export.add_argument("--now", default=None, help="覆盖归档生成时间")
+    export.add_argument(
+        "--with-history",
+        action="store_true",
+        help="同时导出该 task_id 全部运行历史到 history.json",
+    )
 
     verify_archive_cmd = sub.add_parser("verify-archive", help="复算归档清单哈希")
     verify_archive_cmd.add_argument("--dir", required=True, help="归档目录")
@@ -119,6 +124,7 @@ def _handle_export(args: argparse.Namespace) -> int:
         args.task,
         args.out,
         generated_at=utc_now(args.now),
+        include_history=args.with_history,
     )
     print(_json({"ok": True, **result}))
     return EXIT_OK

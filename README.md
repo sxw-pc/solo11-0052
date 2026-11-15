@@ -46,6 +46,7 @@ pytest -q
 ```bash
 python -m sample_attest verify --plan plans/stratified_basic.yaml
 python -m sample_attest export --task <task_id> --out out/archive
+python -m sample_attest export --task <task_id> --out out/archive --with-history
 python -m sample_attest verify-archive --dir out/archive
 ```
 
@@ -128,7 +129,9 @@ archive/
 └── report.md          # 人类可读报告
 ```
 
-`manifest.json` 字段按字典序稳定输出，文件条目也按文件名排序。`generated_at` 是唯一时间字段，不参与文件哈希校验；测试注入固定时钟，保证同输入同归档逐字节一致。`verify-archive` 复算每个文件的 SHA-256，篡改返回 `ARCHIVE_HASH_MISMATCH` 并定位文件名。详见 [`docs/ARCHIVE_LAYOUT.md`](docs/ARCHIVE_LAYOUT.md)。
+`manifest.json` 字段按字典序稳定输出，文件条目也按文件名排序。`generated_at` 是唯一时间字段，不参与文件哈希校验；测试注入固定时钟，保证同输入同归档逐字节一致。`verify-archive` 复算每个文件的 SHA-256，篡改返回 `ARCHIVE_HASH_MISMATCH` 并定位文件名。
+
+追加 `--with-history` 导出时，归档增加 `history.json` 并在清单登记其 sha256/size：文件按 `run_id` 升序记录同一 `task_id` 的全部运行，每条含 `run_id`、`created_at`、`status`、`sample_fingerprint`、核验计数 `check_counts` 与相对上一次运行的 `diff.added`/`diff.missing` 完整样本键差异。`verify-archive` 对带历史的归档会在哈希通过后比较相邻运行的样本指纹：出现不同值即给出 `ARCHIVE_REPRODUCIBILITY_FORK` 可复现性分叉结论并定位相邻 `run_id` 对（归档仍判 VALID）；`history.json` 被篡改仍按 `ARCHIVE_HASH_MISMATCH` 处理。不带开关的导出与旧版归档格式完全兼容。详见 [`docs/ARCHIVE_LAYOUT.md`](docs/ARCHIVE_LAYOUT.md)。
 
 ## 明确不实现
 
@@ -152,7 +155,7 @@ archive/
 | 数据集 | `DATASET_FILE_NOT_FOUND` `DATASET_INVALID_FORMAT` `DATASET_ENCODING_ERROR` `DATASET_PARSE_ERROR` `DATASET_EMPTY` `DATASET_MISSING_KEY_FIELD` `DATASET_MISSING_KEY` `DATASET_DUPLICATE_KEY` `DATASET_BLANK_LINE` |
 | 抽样 | `SAMPLE_EMPTY_POPULATION` `SAMPLE_TARGET_ZERO` `SAMPLE_SIZE_EXCEEDS_POPULATION` `SAMPLE_DUPLICATE_POSITION` `SAMPLE_SYSTEMATIC_WRAP` `SAMPLE_EMPTY_STRATUM` `SAMPLE_MISSING_STRATUM_VALUE` `STRATUM_QUOTA_SHORT` `STRATUM_GROUP_MISSING` `STRATUM_UNPLANNED_GROUP` `SAMPLE_EMPTY_CLUSTER` `SAMPLE_MISSING_CLUSTER_VALUE` `CLUSTER_OVERSHOOT` |
 | 核验 | `CHECK_QUOTA_SHORT` `CHECK_QUOTA_OVER` `CHECK_RATE_OUT_OF_RANGE` `CHECK_RATE_AT_BOUNDARY` `CHECK_COVERAGE_MISSING` `CHECK_COVERAGE_MINIMUM_ONLY` `CHECK_DUPLICATE_KEY` `CHECK_KEY_OUTSIDE_POPULATION` `CHECK_EMPTY_SAMPLE` `CHECK_FIELD_NOT_FOUND` `VERIFY_NO_BASELINE` `VERIFY_NOT_REPRODUCIBLE` |
-| 台账/归档/服务 | `LEDGER_ERROR` `LEDGER_TASK_NOT_FOUND` `ARCHIVE_TASK_NOT_FOUND` `ARCHIVE_MANIFEST_INVALID` `ARCHIVE_MISSING_FILE` `ARCHIVE_HASH_MISMATCH` `SERVER_METHOD_NOT_ALLOWED` `IO_ERROR` |
+| 台账/归档/服务 | `LEDGER_ERROR` `LEDGER_TASK_NOT_FOUND` `ARCHIVE_TASK_NOT_FOUND` `ARCHIVE_MANIFEST_INVALID` `ARCHIVE_MISSING_FILE` `ARCHIVE_HASH_MISMATCH` `ARCHIVE_HISTORY_INVALID` `ARCHIVE_REPRODUCIBILITY_FORK` `SERVER_METHOD_NOT_ALLOWED` `IO_ERROR` |
 
 CLI 退出码：`0` 成功/可复现；`1` 核验失败；`2` 用法或加载错误；`3` 严格模式下出现警告；`4` 指纹不可复现；`5` 归档校验失败。
 

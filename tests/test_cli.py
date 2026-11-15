@@ -155,3 +155,69 @@ def test_verify_archive_tamper_exit_code(tmp_path, capsys):
     assert main(["verify-archive", "--dir", str(archive)]) == 5
     result = parse_json(capsys.readouterr().out)
     assert result["errors"][0]["code"] == "ARCHIVE_HASH_MISMATCH"
+
+
+def test_export_with_history_and_verify_detects_fork(tmp_path, capsys):
+    code, db, _ = run_basic(tmp_path)
+    assert code == 0
+    payload = parse_json(capsys.readouterr().out)
+    task_id = payload["task_id"]
+    # Same-seed rerun: identical fingerprint, history stays consistent so far.
+    assert main(
+        ["run", "--plan", str(PLAN), "--out", str(tmp_path / "out2"), "--db", str(db), "--now", NOW]
+    ) == 0
+    capsys.readouterr()
+    archive = tmp_path / "archive"
+    assert main(
+        [
+            "export", "--task", task_id, "--out", str(archive),
+            "--db", str(db), "--now", NOW, "--with-history",
+        ]
+    ) == 0
+    export_payload = parse_json(capsys.readouterr().out)
+    assert "history.json" in export_payload["files"]
+    assert (archive / "history.json").is_file()
+    assert main(["verify-archive", "--dir", str(archive)]) == 0
+    result = parse_json(capsys.readouterr().out)
+    assert result["status"] == "VALID"
+    assert result["history"]["run_count"] == 2
+    assert result["history"]["reproducibility"] == "CONSISTENT"
+
+    # Insert a forked run under the same task_id directly into the ledger.
+    from sample_attest.ledger import Ledger
+    from sample_attest.fingerprint import sample_fingerprint_sorted
+    import copy
+
+    ledger = Ledger(db)
+    latest = ledger.get_latest_by_task(task_id)
+    forked_keys = sorted(set(latest["sample_keys"][2:]) | {"subject_fork_1"})
+    report = copy.deepcopy(latest["report"])
+    fingerprint = sample_fingerprint_sorted(forked_keys)
+    report["sample"]["selected_keys_ordered"] = list(forked_keys)
+    report["sample"]["selected_keys_sorted"] = forked_keys
+    report["sample"]["count"] = len(forked_keys)
+    report["sample"]["fingerprints"]["sample_fingerprint"] = fingerprint
+    report["sample"]["fingerprints"]["sample_fingerprint_sorted"] = fingerprint
+    ledger.record_run(
+        report=report,
+        plan_yaml=latest["plan_yaml"],
+        sample_keys=forked_keys,
+        report_markdown=latest["report_markdown"],
+        created_at=NOW,
+    )
+    forked_archive = tmp_path / "archive-fork"
+    assert main(
+        [
+            "export", "--task", task_id, "--out", str(forked_archive),
+            "--db", str(db), "--now", NOW, "--with-history",
+        ]
+    ) == 0
+    capsys.readouterr()
+    assert main(["verify-archive", "--dir", str(forked_archive)]) == 0
+    result = parse_json(capsys.readouterr().out)
+    assert result["status"] == "VALID"
+    assert result["history"]["reproducibility"] == "FORKED"
+    fork = result["history"]["forks"][0]
+    assert fork["code"] == "ARCHIVE_REPRODUCIBILITY_FORK"
+    assert fork["previous_run_id"] == 2
+    assert fork["run_id"] == 3

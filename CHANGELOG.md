@@ -3,6 +3,21 @@
 All notable changes to this project are documented here. The project follows
 Semantic Versioning.
 
+## Unreleased
+
+- `export --with-history` now writes `history.json` with every run of a `task_id`
+  (`run_id`, `created_at`, `status`, `sample_fingerprint`, `check_counts` and the
+  full added/missing sample-key diff versus the previous run), registered in
+  `manifest.json` with its SHA-256 and size.
+- `verify-archive` accepts legacy four-file archives unchanged and, when
+  `history.json` is present, reports reproducibility forks with the adjacent
+  `run_id` pair and both fingerprints (`ARCHIVE_REPRODUCIBILITY_FORK`) instead of
+  treating them as tampering; a modified `history.json` still fails with
+  `ARCHIVE_HASH_MISMATCH`. Malformed history payloads raise
+  `ARCHIVE_HISTORY_INVALID`.
+- New `Ledger.list_runs_by_task()` query; default export output remains byte-for-byte
+  identical to the previous release.
+
 ## 0.1.0 - 2026-11-14
 
 - Initial release of the local, offline sampling attestation tool.

@@ -130,6 +130,15 @@ class Ledger:
             ).fetchone()[0]
         return self._parse_task(row, int(count))
 
+    def list_runs_by_task(self, task_id: str) -> list[dict[str, Any]]:
+        """Return every run of a task_id in chronological order (run_id asc)."""
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM task_runs WHERE task_id = ? ORDER BY run_id ASC",
+                (task_id,),
+            ).fetchall()
+        return [self._parse_task(row) for row in rows]
+
     def get_latest_by_plan(self, plan_id: str) -> dict[str, Any] | None:
         with self._connection() as connection:
             row = connection.execute(

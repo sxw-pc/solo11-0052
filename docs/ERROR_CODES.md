@@ -80,6 +80,8 @@
 | `ARCHIVE_MANIFEST_INVALID` | error | 清单缺失、不可读或结构非法 |
 | `ARCHIVE_MISSING_FILE` | error | 清单声明的文件不存在 |
 | `ARCHIVE_HASH_MISMATCH` | error | 文件 SHA-256 与清单不符，定位文件名 |
+| `ARCHIVE_HISTORY_INVALID` | error | `history.json` 哈希通过但结构非法或 `task_id` 与清单不一致 |
+| `ARCHIVE_REPRODUCIBILITY_FORK` | finding | 历史中相邻运行的 `sample_fingerprint` 不一致，定位相邻 `run_id` 对；归档仍判 VALID |
 | `SERVER_METHOD_NOT_ALLOWED` | error | 对只读接口执行写方法，HTTP 405 |
 | `IO_ERROR` | error | CLI 文件系统 I/O 失败 |
 
