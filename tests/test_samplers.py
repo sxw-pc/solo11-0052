@@ -6,6 +6,9 @@ import pytest
 
 from sample_attest.codes import (
     CLUSTER_OVERSHOOT,
+    CLUSTER_QUOTA_SHORT,
+    CLUSTER_SUBSTRATA_MISSING,
+    CLUSTER_SUBSTRATUM_UNPLANNED,
     SAMPLE_EMPTY_POPULATION,
     SAMPLE_SIZE_EXCEEDS_POPULATION,
     SAMPLE_TARGET_ZERO,
@@ -18,6 +21,7 @@ from sample_attest.samplers import (
     registered_modes,
     run_sampler,
 )
+from sample_attest.samplers.cluster import apportion_quotas, plan_cluster_allocation
 
 
 def make_items(keys, region="region_A", cluster="cluster_01"):
@@ -186,3 +190,195 @@ def test_cluster_take_all_and_overshoot_warning():
     assert len(result.selected) == 6
     assert CLUSTER_OVERSHOOT in warning_codes(result)
     assert result.metadata["selected_clusters"]
+
+
+# --- within-cluster sub-stratum allocation ---------------------------------
+
+
+def make_segment_items(segments_per_cluster):
+    items = []
+    counter = 0
+    for cluster_id, segments in segments_per_cluster.items():
+        for segment, count in segments.items():
+            for _ in range(count):
+                counter += 1
+                items.append(
+                    {
+                        "subject_id": f"subject_{counter:04d}",
+                        "cluster": cluster_id,
+                        "segment": segment,
+                    }
+                )
+    return items
+
+
+def cluster_substrata_plan(weights, size, seed=5):
+    return make_plan(
+        "cluster",
+        size=size,
+        seed=seed,
+        cluster_field="cluster",
+        cluster_substrata_field="segment",
+        cluster_substrata_weights=weights,
+    )
+
+
+def test_apportion_quotas_largest_remainder_and_byte_tiebreak():
+    # Target 5 over equal weights 1,1,1: exact 5/3 each, floors 1+1+1=3,
+    # two remainder units to the two byte-smallest names on equal remainder.
+    quotas = apportion_quotas(
+        {"segment_a": 1, "segment_b": 1, "segment_c": 1},
+        {"segment_a": 1, "segment_b": 1, "segment_c": 1},
+        5,
+    )
+    assert quotas == {"segment_a": 2, "segment_b": 2, "segment_c": 1}
+    assert sum(quotas.values()) == 5
+
+
+def test_apportion_quotas_combines_size_and_weight():
+    # weight*size: a=1*1=1, b=1*2=2, c=3*1=3 -> target 6 -> exact 1,2,3
+    quotas = apportion_quotas(
+        {"segment_a": 1, "segment_b": 2, "segment_c": 1},
+        {"segment_a": 1, "segment_b": 1, "segment_c": 3},
+        6,
+    )
+    assert quotas == {"segment_a": 1, "segment_b": 2, "segment_c": 3}
+
+
+def test_cluster_substrata_allocation_is_deterministic_and_keeps_cluster_boundary():
+    items = make_segment_items(
+        {
+            "cluster_01": {"segment_low": 2, "segment_mid": 2, "segment_high": 2},
+            "cluster_02": {"segment_low": 2, "segment_mid": 2, "segment_high": 2},
+        }
+    )
+    weights = {
+        "cluster_01": {"segment_low": 1, "segment_mid": 1, "segment_high": 1},
+        "cluster_02": {"segment_low": 1, "segment_mid": 1, "segment_high": 1},
+    }
+    plan = cluster_substrata_plan(weights, size=6)
+    first = run_sampler(items, plan)
+    second = run_sampler(items, plan)
+    assert first.selected == second.selected
+    # cluster boundary unchanged: same take-all selection as plain cluster mode
+    plain = run_sampler(
+        items,
+        make_plan("cluster", size=6, seed=5, cluster_field="cluster"),
+    )
+    assert first.metadata["selected_clusters"] == plain.metadata["selected_clusters"]
+    assert first.metadata["cluster_boundary_size"] == len(plain.selected)
+    # target volume unchanged
+    assert len(first.selected) == len(plain.selected) == 6
+    record = first.metadata["cluster_allocations"][
+        first.metadata["selected_clusters"][0]
+    ]
+    assert record["cluster_size"] == 6
+    assert record["allocation_target"] == 6
+    assert record["quotas"] == {
+        "segment_low": 2,
+        "segment_mid": 2,
+        "segment_high": 2,
+    }
+    assert record["achieved"] == record["quotas"]
+    assert record["shortfall"] == 0
+
+
+def test_cluster_substrata_over_quota_warns_located_without_expanding_target():
+    # cluster_01 has 1 low, 3 mid, 2 high. Weight 3/1/1 over target 6 gives
+    # low=2 > 1 available -> retain take-all, warn at cluster:cluster_01:segment_low.
+    items = make_segment_items(
+        {
+            "cluster_01": {"segment_low": 1, "segment_mid": 3, "segment_high": 2},
+        }
+    )
+    weights = {
+        "cluster_01": {"segment_low": 3, "segment_mid": 1, "segment_high": 1}
+    }
+    plan = cluster_substrata_plan(weights, size=6)
+    result = run_sampler(items, plan)
+    short = [w for w in result.warnings if w["code"] == CLUSTER_QUOTA_SHORT]
+    assert len(short) == 1
+    assert short[0]["path"] == "cluster:cluster_01:segment_low"
+    assert short[0]["gap"] == 1
+    # No new cluster or subject was introduced: take-all retained, count == 6.
+    assert len(result.selected) == 6
+    assert set(result.selected) == {row["subject_id"] for row in items}
+    record = result.metadata["cluster_allocations"]["cluster_01"]
+    assert record["quotas"]["segment_low"] == 2
+    assert record["achieved"]["segment_low"] == 1
+    assert record["achieved_total"] == 6
+    assert record["fallback"] == "take-all"
+
+
+def test_cluster_substrata_selection_does_not_add_clusters_or_exceed_target():
+    items = make_segment_items(
+        {
+            "cluster_01": {"segment_low": 2, "segment_mid": 2, "segment_high": 2},
+            "cluster_02": {"segment_low": 2, "segment_mid": 2, "segment_high": 2},
+            "cluster_03": {"segment_low": 2, "segment_mid": 2, "segment_high": 2},
+        }
+    )
+    weights = {
+        cluster_id: {"segment_low": 1, "segment_mid": 1, "segment_high": 1}
+        for cluster_id in ("cluster_01", "cluster_02", "cluster_03")
+    }
+    plan = cluster_substrata_plan(weights, size=7)
+    result = run_sampler(items, plan)
+    assert result.metadata["cluster_boundary_size"] == 12
+    assert result.metadata["selected_clusters"] == ["cluster_01", "cluster_02"]
+    assert len(result.selected) == 12
+    assert result.metadata["target_size"] == 7
+    assert CLUSTER_OVERSHOOT in warning_codes(result)
+
+
+def test_cluster_substrata_missing_weights_falls_back_to_take_all():
+    items = make_segment_items(
+        {
+            "cluster_01": {"segment_low": 2, "segment_mid": 2, "segment_high": 2},
+        }
+    )
+    # Only cluster_09 is declared, but cluster_01 is the selected cluster.
+    plan = cluster_substrata_plan(
+        {"cluster_09": {"segment_low": 1}}, size=6
+    )
+    result = run_sampler(items, plan)
+    assert CLUSTER_SUBSTRATA_MISSING in warning_codes(result)
+    assert len(result.selected) == 6
+
+
+def test_cluster_substrata_unplanned_layer_warns():
+    items = make_segment_items(
+        {"cluster_01": {"segment_low": 3, "segment_mid": 3}}
+    )
+    plan = cluster_substrata_plan(
+        {"cluster_01": {"segment_low": 1, "segment_mid": 1}}, size=6
+    )
+    result = run_sampler(items, plan)
+    # all declared quota fits, so 6 rows cannot be split into 3/3 with only
+    # two declared layers; the declared layers absorb the target exactly.
+    assert result.metadata["cluster_allocations"]["cluster_01"]["achieved_total"] == 6
+
+
+def test_cluster_substrata_unplanned_layer_in_dataset_warns():
+    items = make_segment_items(
+        {
+            "cluster_01": {"segment_low": 3, "segment_mid": 2, "segment_other": 1},
+        }
+    )
+    plan = cluster_substrata_plan(
+        {"cluster_01": {"segment_low": 1, "segment_mid": 1}}, size=6
+    )
+    result = run_sampler(items, plan)
+    unplanned = [
+        w for w in result.warnings if w["code"] == CLUSTER_SUBSTRATUM_UNPLANNED
+    ]
+    assert unplanned and unplanned[0]["path"] == "cluster:cluster_01:segment_other"
+
+
+def test_plan_cluster_allocation_sums_to_cluster_target():
+    sizes = {"segment_low": 2, "segment_mid": 2, "segment_high": 2}
+    weights = {"segment_low": 1, "segment_mid": 1, "segment_high": 1}
+    quotas, achieved, over, fallback = plan_cluster_allocation(sizes, weights, 6)
+    assert sum(quotas.values()) == 6
+    assert not over and not fallback
+    assert sum(achieved.values()) == 6

@@ -1,0 +1,44 @@
+# Two-stage within-cluster allocation demo.
+#
+# Cluster selection is the same one-stage, seeded take-all selection as
+# cluster_basic.yaml. For every selected cluster its row count becomes the
+# within-cluster target, which is apportioned to the declared `segment`
+# sub-strata by weight with a largest-remainder allocation.
+plan_id: cluster-substrata
+dataset:
+  path: ../fixtures/population_cluster.jsonl
+  format: jsonl
+key_field: subject_id
+mode: cluster
+seed: 5
+size: 24
+cluster_field: cluster
+cluster_substrata_field: segment
+cluster_substrata_weights:
+  cluster_01:
+    segment_low: 1.0
+    segment_mid: 1.0
+    segment_high: 1.0
+  cluster_02:
+    segment_low: 2.0
+    segment_mid: 1.0
+    segment_high: 1.0
+  cluster_03:
+    segment_low: 1.0
+    segment_mid: 1.0
+    segment_high: 1.0
+  cluster_07:
+    segment_low: 1.0
+    segment_mid: 1.0
+    segment_high: 1.0
+checks:
+  - id: substrata_quota
+    type: quota
+  - id: rate_band
+    type: rate_range
+    min: 0.3
+    max: 0.7
+  - id: keys_unique
+    type: key_unique
+  - id: keys_in_population
+    type: no_overlap

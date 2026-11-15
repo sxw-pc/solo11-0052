@@ -17,7 +17,8 @@ from .codes import (
     CHECK_RATE_OUT_OF_RANGE,
 )
 from .dataset_loader import Dataset
-from .samplers.base import SampleResult, byte_sorted, make_warning
+from .samplers.base import SampleResult, byte_sorted, group_items, make_warning
+from .samplers.cluster import plan_cluster_allocation
 from .verification_types import CheckResult
 
 
@@ -25,9 +26,119 @@ def _status(observed: Any, expected: Any, location: str, message: str) -> CheckR
     return CheckResult("", "", "pass", None, message, observed, expected, location)
 
 
+def _cluster_quota_check(
+    check: dict[str, Any], plan: dict[str, Any], dataset: Dataset, result: SampleResult
+) -> CheckResult:
+    """Verify per-cluster sub-stratum quotas against the sampled rows.
+
+    Quotas and the plan-consistent achieved allocation are re-derived
+    deterministically from the declared weights and each selected cluster's
+    population row counts, independently of sampler metadata.  A declared
+    quota larger than the sub-stratum's available rows is an unfulfillable
+    declaration: the sampler retains the whole-cluster take-all result and
+    warns with ``CLUSTER_QUOTA_SHORT``; here the expected per-layer count is
+    that take-all result, so a matching sample verifies.  Any deviation from
+    the derived per-cluster allocation is located at
+    ``cluster:<cluster>:<substratum>``.  A shortfall is never repaired by
+    another cluster or subject.
+    """
+    rule_id = check["id"]
+    cluster_field = plan.get("cluster_field", "")
+    substrata_field = plan.get("cluster_substrata_field", "")
+    weights = dict(plan.get("cluster_substrata_weights") or {})
+    selected_clusters = list(result.metadata.get("selected_clusters") or [])
+    if not selected_clusters:
+        sampled_cluster_values = {
+            str(dataset.rows[dataset.key_to_row[key]].get(cluster_field, ""))
+            for key in result.selected
+            if key in dataset.key_to_row
+        }
+        selected_clusters = byte_sorted(sampled_cluster_values)
+    population_by_cluster: dict[str, list[dict[str, Any]]] = group_items(
+        dataset.rows, cluster_field
+    )
+    actual_counts: dict[str, dict[str, int]] = {}
+    for key in result.selected:
+        index = dataset.key_to_row.get(key)
+        if index is None:
+            continue
+        row = dataset.rows[index]
+        cluster_id = str(row.get(cluster_field, ""))
+        group = str(row.get(substrata_field, ""))
+        bucket = actual_counts.setdefault(cluster_id, {})
+        bucket[group] = bucket.get(group, 0) + 1
+    observed: dict[str, dict[str, int]] = {}
+    expected: dict[str, dict[str, int]] = {}
+    entries: list[dict[str, Any]] = []
+    shortfalls = 0
+    overs = 0
+    for cluster_id in byte_sorted(selected_clusters):
+        declared = weights.get(cluster_id)
+        if not isinstance(declared, dict) or not declared:
+            continue
+        cluster_rows = population_by_cluster.get(cluster_id, [])
+        sizes = {
+            group: len(rows)
+            for group, rows in group_items(cluster_rows, substrata_field).items()
+        }
+        _quotas, achieved, _over, _fallback = plan_cluster_allocation(
+            sizes, declared, len(cluster_rows)
+        )
+        observed[cluster_id] = {}
+        expected[cluster_id] = {}
+        for group in byte_sorted(declared):
+            want = achieved[group]
+            actual = actual_counts.get(cluster_id, {}).get(group, 0)
+            observed[cluster_id][group] = actual
+            expected[cluster_id][group] = want
+            location = f"cluster:{cluster_id}:{group}"
+            if actual < want:
+                shortfalls += 1
+                entries.append(
+                    make_warning(
+                        CHECK_QUOTA_SHORT,
+                        location,
+                        f"整群 {cluster_id!r} 的次级分层 {group!r} 目标 {want}、"
+                        f"实得 {actual}、缺口 {want - actual}",
+                        observed=actual,
+                        expected=want,
+                        gap=want - actual,
+                        cluster=cluster_id,
+                        substratum=group,
+                    )
+                )
+            elif actual > want:
+                overs += 1
+                entries.append(
+                    make_warning(
+                        CHECK_QUOTA_OVER,
+                        location,
+                        f"整群 {cluster_id!r} 的次级分层 {group!r} 目标 {want}、"
+                        f"实得 {actual}、超出 {actual - want}",
+                        observed=actual,
+                        expected=want,
+                        gap=actual - want,
+                        cluster=cluster_id,
+                        substratum=group,
+                    )
+                )
+    if shortfalls:
+        code, status, message = CHECK_QUOTA_SHORT, "fail", f"{shortfalls} 个群内次级配额不足"
+    elif overs:
+        code, status, message = CHECK_QUOTA_OVER, "warn", f"{overs} 个群内次级配额超出"
+    else:
+        code, status, message = None, "pass", "所有群内次级配额精确匹配"
+    return CheckResult(
+        rule_id, "quota", status, code, message,
+        observed, expected, "plan.cluster_substrata_weights", entries,
+    )
+
+
 def _quota_check(
     check: dict[str, Any], plan: dict[str, Any], dataset: Dataset, result: SampleResult
 ) -> CheckResult:
+    if plan.get("mode") == "cluster" and plan.get("cluster_substrata_weights"):
+        return _cluster_quota_check(check, plan, dataset, result)
     rule_id = check["id"]
     field_name = plan.get("strata_field", "")
     expected = dict(plan.get("expected_distribution") or {})
@@ -114,7 +225,12 @@ def _rate_check(
 def _coverage_check(
     check: dict[str, Any], plan: dict[str, Any], dataset: Dataset, result: SampleResult
 ) -> CheckResult:
-    field_name = check.get("field") or plan.get("strata_field") or plan.get("cluster_field")
+    field_name = (
+        check.get("field")
+        or plan.get("strata_field")
+        or plan.get("cluster_substrata_field")
+        or plan.get("cluster_field")
+    )
     if not field_name or field_name not in dataset.fieldnames:
         message = f"覆盖字段 {field_name!r} 不存在于数据集"
         return CheckResult(

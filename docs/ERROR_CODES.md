@@ -52,13 +52,16 @@
 | `SAMPLE_EMPTY_CLUSTER` | warning | 空整群边界 |
 | `SAMPLE_MISSING_CLUSTER_VALUE` | warning | 群字段为空，归入空群 |
 | `CLUSTER_OVERSHOOT` | warning | 整群纳入导致样本量超目标 |
+| `CLUSTER_QUOTA_SHORT` | warning | 被选整群内某次级分层配额超过该层实际行数；保留 take-all，不补选 |
+| `CLUSTER_SUBSTRATA_MISSING` | warning | 被选整群未声明群内次级权重，按 take-all 保留 |
+| `CLUSTER_SUBSTRATUM_UNPLANNED` | warning | 整群内存在未声明权重的次级分层，配额按 0 |
 
 ## 分布核验 / 可复现签验
 
 | 代码 | 级别 | 触发条件 | 定位 |
 |---|---|---|---|
-| `CHECK_QUOTA_SHORT` | fail | 分层实际数少于声明配额 | `stratum:<name>` |
-| `CHECK_QUOTA_OVER` | warn | 分层实际数大于声明配额 | `stratum:<name>` |
+| `CHECK_QUOTA_SHORT` | fail | 分层实际数少于声明配额 | `stratum:<name>`；整群次级核验为 `cluster:<cluster>:<substratum>` |
+| `CHECK_QUOTA_OVER` | warn | 分层实际数大于声明配额 | `stratum:<name>`；整群次级核验为 `cluster:<cluster>:<substratum>` |
 | `CHECK_RATE_OUT_OF_RANGE` | fail | 抽样率不在声明区间 | `verification.rate` |
 | `CHECK_RATE_AT_BOUNDARY` | warn | 抽样率恰在区间端点 | `verification.rate` |
 | `CHECK_COVERAGE_MISSING` | fail | 声明分组未被抽中 | `<field>:<group>` |

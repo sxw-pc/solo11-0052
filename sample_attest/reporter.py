@@ -122,6 +122,38 @@ def report_markdown(report: dict[str, Any]) -> str:
             f"{_status_label(check['status'])} | {_cell(check['observed'])} | "
             f"{_cell(check['expected'])} | {_cell(check['location'])} |"
         )
+    allocations = sample["metadata"].get("cluster_allocations")
+    if isinstance(allocations, dict) and allocations:
+        lines.extend(
+            [
+                "",
+                "## 群内次级配额分摊",
+                "",
+                "| 整群 | 群规模 | 分摊目标 | 次级分层 | 实有 | 配额 | 实得 | 缺口 |",
+                "|---|---|---|---|---|---|---|---|",
+            ]
+        )
+        for cluster_id in sorted(allocations):
+            record = allocations[cluster_id]
+            quotas = record.get("quotas") or {}
+            achieved = record.get("achieved") or {}
+            sizes = record.get("substrata_sizes") or {}
+            layers = sorted(set(quotas) | set(achieved) | set(sizes))
+            if not layers:
+                lines.append(
+                    f"| {_cell(cluster_id, 40)} | {record.get('cluster_size')} | "
+                    f"{record.get('allocation_target')} | - | - | - | "
+                    f"{record.get('achieved_total')} | {record.get('shortfall')} |"
+                )
+                continue
+            for group in layers:
+                lines.append(
+                    f"| {_cell(cluster_id, 40)} | {record.get('cluster_size')} | "
+                    f"{record.get('allocation_target')} | {_cell(group, 40)} | "
+                    f"{sizes.get(group, 0)} | {quotas.get(group, 0)} | "
+                    f"{achieved.get(group, 0)} | "
+                    f"{max(0, quotas.get(group, 0) - achieved.get(group, 0))} |"
+                )
     lines.extend(["", "## 归因清单", ""])
     if report["explanations"]:
         lines.extend(

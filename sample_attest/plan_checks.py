@@ -86,7 +86,11 @@ def validate_check(
         field_name = raw.get("field")
         if field_name is not None and (not isinstance(field_name, str) or not field_name):
             errors.append(issue(PLAN_TYPE_ERROR, f"{path}.field", "field 必须是非空字符串"))
-        if field_name is None and not (plan.get("strata_field") or plan.get("cluster_field")):
+        if field_name is None and not (
+            plan.get("strata_field")
+            or plan.get("cluster_substrata_field")
+            or plan.get("cluster_field")
+        ):
             errors.append(
                 issue(PLAN_BAD_CHECK, f"{path}.field", "非分层/整群方案必须显式声明 field")
             )
@@ -95,7 +99,12 @@ def validate_check(
                 issue(PLAN_BAD_CHECK, f"{path}.groups", "需声明 groups 或 expected_distribution")
             )
     elif check_type == "quota" and expected is None:
-        errors.append(
-            issue(PLAN_BAD_CHECK, f"{path}.type", "quota 核验需要 expected_distribution")
-        )
+        if not plan.get("cluster_substrata_weights"):
+            errors.append(
+                issue(
+                    PLAN_BAD_CHECK,
+                    f"{path}.type",
+                    "quota 核验需要 expected_distribution 或 cluster_substrata_weights",
+                )
+            )
     return check if not any(e["path"].startswith(path) for e in errors) else None

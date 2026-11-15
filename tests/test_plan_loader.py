@@ -12,6 +12,7 @@ from sample_attest.codes import (
     PLAN_BAD_RANGE,
     PLAN_CONFLICT,
     PLAN_DUPLICATE_CHECK_ID,
+    PLAN_FIELD_NOT_APPLICABLE,
     PLAN_FILE_NOT_FOUND,
     PLAN_MISSING_FIELD,
     PLAN_PARSE_ERROR,
@@ -159,3 +160,117 @@ def test_validation_error_raised_on_load(yaml_plan, base_plan):
     with pytest.raises(PlanValidationError) as exc:
         load_plan(path)
     assert any(item["code"] == PLAN_MISSING_FIELD for item in exc.value.errors)
+
+
+def cluster_plan(**overrides):
+    plan = {
+        "plan_id": "cluster-substrata-schema",
+        "dataset": {"path": "unused.jsonl", "format": "jsonl"},
+        "key_field": "subject_id",
+        "mode": "cluster",
+        "seed": 5,
+        "size": 6,
+        "cluster_field": "cluster",
+        "cluster_substrata_field": "segment",
+        "cluster_substrata_weights": {
+            "cluster_01": {"segment_low": 1, "segment_mid": 1, "segment_high": 1}
+        },
+        "checks": [{"id": "q", "type": "quota"}],
+    }
+    plan.update(overrides)
+    return plan
+
+
+def test_cluster_substrata_plan_validates_and_normalizes():
+    raw = cluster_plan()
+    raw["cluster_substrata_weights"] = {
+        "cluster_01": {"segment_low": 2.0, "segment_mid": 1, "segment_high": 1}
+    }
+    result = validate_plan(raw)
+    assert result.ok
+    assert result.plan["cluster_substrata_field"] == "segment"
+    assert result.plan["cluster_substrata_weights"]["cluster_01"]["segment_low"] == 2.0
+
+
+def test_cluster_substrata_fields_are_whitelisted_top_level():
+    raw = cluster_plan()
+    result = validate_plan(raw)
+    assert result.ok
+    assert not [e for e in result.errors if e["code"] == PLAN_UNKNOWN_FIELD]
+
+
+@pytest.mark.parametrize(
+    "missing",
+    ["cluster_substrata_field", "cluster_substrata_weights"],
+)
+def test_cluster_substrata_fields_require_each_other(missing):
+    raw = cluster_plan()
+    raw.pop(missing)
+    result = validate_plan(raw)
+    assert PLAN_MISSING_FIELD in codes(result)
+    assert any(
+        item["path"] == f"plan.{missing}" for item in result.errors
+    )
+
+
+@pytest.mark.parametrize("mode", ["random", "stratified", "systematic"])
+def test_cluster_substrata_fields_rejected_outside_cluster(mode):
+    raw = cluster_plan(mode=mode)
+    if mode == "stratified":
+        raw["strata_field"] = "region"
+    result = validate_plan(raw)
+    assert PLAN_FIELD_NOT_APPLICABLE in codes(result)
+    paths = {item["path"] for item in result.errors}
+    assert "plan.cluster_substrata_field" in paths
+    assert "plan.cluster_substrata_weights" in paths
+
+
+def test_cluster_mode_still_requires_cluster_field_with_substrata():
+    raw = cluster_plan()
+    raw.pop("cluster_field")
+    result = validate_plan(raw)
+    assert PLAN_MISSING_FIELD in codes(result)
+    assert any(item["path"] == "plan.cluster_field" for item in result.errors)
+
+
+@pytest.mark.parametrize(
+    "weights,expected_code",
+    [
+        ([], PLAN_TYPE_ERROR),
+        ("x", PLAN_TYPE_ERROR),
+        ({"cluster_01": []}, PLAN_TYPE_ERROR),
+        ({"cluster_01": {"segment_low": 0}}, PLAN_BAD_RANGE),
+        ({"cluster_01": {"segment_low": -1}}, PLAN_BAD_RANGE),
+        ({"cluster_01": {"segment_low": "heavy"}}, PLAN_TYPE_ERROR),
+        ({"": {"segment_low": 1}}, PLAN_TYPE_ERROR),
+    ],
+)
+def test_cluster_substrata_weights_validation(weights, expected_code):
+    raw = cluster_plan(cluster_substrata_weights=weights)
+    result = validate_plan(raw)
+    assert expected_code in codes(result)
+
+
+def test_cluster_substrata_weights_reject_unknown_nested_shape():
+    raw = cluster_plan(
+        cluster_substrata_weights={
+            "cluster_01": {"segment_low": 1, "extra": {"nested": 2}},
+        }
+    )
+    result = validate_plan(raw)
+    assert PLAN_TYPE_ERROR in codes(result)
+
+
+def test_quota_check_allowed_with_cluster_substrata_weights(base_plan):
+    raw = cluster_plan()
+    raw["checks"] = [{"id": "q", "type": "quota"}]
+    result = validate_plan(raw)
+    assert result.ok
+
+
+def test_load_cluster_substrata_plan_relative_dataset():
+    root = Path(__file__).resolve().parents[1]
+    loaded = load_plan(root / "plans" / "cluster_substrata.yaml")
+    assert loaded.plan_id == "cluster-substrata"
+    assert loaded.dataset_path == root / "fixtures" / "population_cluster.jsonl"
+    assert loaded.data["cluster_substrata_field"] == "segment"

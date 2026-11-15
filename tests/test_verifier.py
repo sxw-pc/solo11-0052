@@ -181,3 +181,130 @@ def test_strict_mode_turns_warning_into_failure(stratified_dataset):
     strict = run_checks(plan, stratified_dataset, sample(selected[:15]), strict=True)
     assert strict.status == "fail"
     assert strict.strict_failed is True
+
+
+# --- cluster sub-stratum quota verification --------------------------------
+
+
+def cluster_plan(weights, **extra):
+    plan = {
+        "plan_id": "verify-cluster-substrata",
+        "mode": "cluster",
+        "cluster_field": "cluster",
+        "cluster_substrata_field": "segment",
+        "cluster_substrata_weights": weights,
+        "checks": [{"id": "q", "type": "quota"}],
+        **extra,
+    }
+    return plan
+
+
+def cluster_weights(clusters):
+    return {
+        cluster_id: {"segment_low": 1, "segment_mid": 1, "segment_high": 1}
+        for cluster_id in clusters
+    }
+
+
+def selected_clusters_for(dataset, cluster_ids):
+    result = []
+    for row in dataset.rows:
+        if row["cluster"] in cluster_ids:
+            result.append(row["subject_id"])
+    return result
+
+
+def test_cluster_substrata_quota_passes_for_take_all_allocation(cluster_dataset):
+    selected = selected_clusters_for(cluster_dataset, ["cluster_01", "cluster_02"])
+    result = SampleResult(
+        "cluster",
+        selected,
+        [],
+        metadata={"selected_clusters": ["cluster_01", "cluster_02"]},
+    )
+    verification = run_checks(
+        cluster_plan(cluster_weights(["cluster_01", "cluster_02"])),
+        cluster_dataset,
+        result,
+    )
+    quota = check_by_type(verification, "quota")
+    assert quota.status == "pass"
+    assert quota.location == "plan.cluster_substrata_weights"
+    assert quota.observed["cluster_01"] == {
+        "segment_low": 2,
+        "segment_mid": 2,
+        "segment_high": 2,
+    }
+
+
+def test_cluster_substrata_quota_short_is_located_per_cluster(cluster_dataset):
+    selected = selected_clusters_for(cluster_dataset, ["cluster_01"])
+    # Drop one low row to create a within-cluster shortfall.
+    removed = next(
+        key
+        for key in selected
+        if cluster_dataset.rows[cluster_dataset.key_to_row[key]]["segment"]
+        == "segment_low"
+    )
+    selected = [key for key in selected if key != removed]
+    result = SampleResult(
+        "cluster", selected, [], metadata={"selected_clusters": ["cluster_01"]}
+    )
+    verification = run_checks(
+        cluster_plan(cluster_weights(["cluster_01"])), cluster_dataset, result
+    )
+    quota = check_by_type(verification, "quota")
+    assert quota.status == "fail"
+    assert quota.code == CHECK_QUOTA_SHORT
+    assert quota.entries[0]["path"] == "cluster:cluster_01:segment_low"
+    assert quota.entries[0]["gap"] == 1
+    assert quota.entries[0]["cluster"] == "cluster_01"
+    assert quota.entries[0]["substratum"] == "segment_low"
+
+
+def test_cluster_substrata_quota_over_is_located_per_cluster(cluster_dataset):
+    selected = selected_clusters_for(cluster_dataset, ["cluster_01", "cluster_02"])
+    result = SampleResult(
+        "cluster",
+        selected,
+        [],
+        metadata={"selected_clusters": ["cluster_01", "cluster_02"]},
+    )
+    plan = cluster_plan(
+        {
+            "cluster_02": {"segment_low": 1, "segment_mid": 1, "segment_high": 1}
+        }
+    )
+    plan["cluster_substrata_weights"]["cluster_01"] = {
+        "segment_low": 1,
+        "segment_mid": 1,
+        "segment_high": 1,
+    }
+    verification = run_checks(plan, cluster_dataset, result)
+    # Every selected cluster matches its own take-all allocation; nothing else.
+    assert check_by_type(verification, "quota").status == "pass"
+
+
+def test_cluster_substrata_quota_uses_plan_not_sampler_metadata(cluster_dataset):
+    selected = selected_clusters_for(cluster_dataset, ["cluster_01"])
+    result = SampleResult("cluster", selected, [], metadata={})
+    verification = run_checks(
+        cluster_plan(cluster_weights(["cluster_01"])), cluster_dataset, result
+    )
+    quota = check_by_type(verification, "quota")
+    assert quota.status == "pass"
+
+
+def test_cluster_substrata_quota_short_stays_fail_under_strict(cluster_dataset):
+    selected = selected_clusters_for(cluster_dataset, ["cluster_01"])
+    removed = selected[0]
+    result = SampleResult(
+        "cluster",
+        [key for key in selected if key != removed],
+        [],
+        metadata={"selected_clusters": ["cluster_01"]},
+    )
+    verification = run_checks(
+        cluster_plan(cluster_weights(["cluster_01"])), cluster_dataset, result, strict=True
+    )
+    assert verification.status == "fail"

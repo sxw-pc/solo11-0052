@@ -155,3 +155,57 @@ def test_verify_archive_tamper_exit_code(tmp_path, capsys):
     assert main(["verify-archive", "--dir", str(archive)]) == 5
     result = parse_json(capsys.readouterr().out)
     assert result["errors"][0]["code"] == "ARCHIVE_HASH_MISMATCH"
+
+
+def test_run_cluster_substrata_plan_reports_cluster_short_and_metadata(tmp_path, capsys):
+    plan = ROOT / "plans" / "cluster_substrata.yaml"
+    code = main(
+        [
+            "run", "--plan", str(plan), "--out", str(tmp_path / "out"),
+            "--db", str(tmp_path / "db"), "--now", NOW,
+        ]
+    )
+    summary = parse_json(capsys.readouterr().out)
+    assert code == 0
+    assert summary["status"] == "warn"
+    assert summary["sample_count"] == 24
+    report = parse_json((tmp_path / "out" / "report.json").read_text(encoding="utf-8"))
+    metadata = report["sample"]["metadata"]
+    # Cluster boundary is untouched by within-cluster allocation.
+    assert metadata["cluster_boundary_size"] == 24
+    assert metadata["target_size"] == 24
+    assert len(metadata["selected_clusters"]) == 4
+    # Per-cluster row count, allocation target and achieved layers are recorded.
+    for cluster_id in metadata["selected_clusters"]:
+        record = metadata["cluster_allocations"][cluster_id]
+        assert record["cluster_size"] == 6
+        assert record["allocation_target"] == 6
+        assert set(record["achieved"]) == {
+            "segment_low",
+            "segment_mid",
+            "segment_high",
+        }
+        assert sum(record["achieved"].values()) == 6
+    short = [
+        warning
+        for warning in report["sample"]["warnings"]
+        if warning["code"] == "CLUSTER_QUOTA_SHORT"
+    ]
+    assert short
+    assert short[0]["path"] == "cluster:cluster_02:segment_low"
+    quota = next(
+        check for check in report["verification"]["checks"] if check["type"] == "quota"
+    )
+    assert quota["status"] == "pass"
+
+
+def test_run_cluster_substrata_plan_is_reproducible(tmp_path, capsys):
+    plan = ROOT / "plans" / "cluster_substrata.yaml"
+    db = tmp_path / "db"
+    first = main(
+        ["run", "--plan", str(plan), "--out", str(tmp_path / "out"), "--db", str(db), "--now", NOW]
+    )
+    capsys.readouterr()
+    assert first == 0
+    assert main(["verify", "--plan", str(plan), "--db", str(db)]) == 0
+    assert capsys.readouterr().out.splitlines()[0] == "REPRODUCIBLE"

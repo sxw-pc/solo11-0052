@@ -89,3 +89,48 @@ def test_write_reports(tmp_path, stratified_dataset):
     assert paths["report_json"].endswith("report.json")
     assert json.loads((tmp_path / "out" / "report.json").read_text(encoding="utf-8"))["task_id"] == "task-report"
     assert COMPLIANCE_STATEMENT in (tmp_path / "out" / "report.md").read_text(encoding="utf-8")
+
+
+def test_cluster_substrata_report_includes_allocation_table(cluster_dataset):
+    from sample_attest.samplers import run_sampler
+
+    plan = {
+        "plan_id": "cluster-substrata-report",
+        "key_field": "subject_id",
+        "mode": "cluster",
+        "seed": 5,
+        "size": 12,
+        "cluster_field": "cluster",
+        "cluster_substrata_field": "segment",
+        "cluster_substrata_weights": {
+            "cluster_01": {"segment_low": 1, "segment_mid": 1, "segment_high": 1},
+            "cluster_02": {"segment_low": 1, "segment_mid": 1, "segment_high": 1},
+        },
+        "checks": [{"id": "q", "type": "quota"}],
+    }
+    sample = run_sampler(cluster_dataset.rows, plan)
+    verification = run_checks(plan, cluster_dataset, sample)
+    report = build_report(
+        plan,
+        cluster_dataset,
+        sample,
+        verification,
+        task_id="task-cluster-substrata",
+        seed_effective=7,
+        generated_at="2026-01-01T00:00:00Z",
+    )
+    assert "cluster_allocations" in report["sample"]["metadata"]
+    for cluster_id in sample.metadata["selected_clusters"]:
+        record = report["sample"]["metadata"]["cluster_allocations"][cluster_id]
+        assert set(record) >= {
+            "cluster_size",
+            "allocation_target",
+            "substrata_sizes",
+            "quotas",
+            "achieved",
+        }
+    markdown = report_markdown(report)
+    assert "群内次级配额分摊" in markdown
+    for cluster_id in sample.metadata["selected_clusters"]:
+        assert cluster_id in markdown
+    assert "segment_low" in markdown

@@ -16,6 +16,22 @@ Semantic Versioning.
 - Deterministic archive export with SHA-256 manifest and tamper verification.
 - Offline pytest suite with a socket kill-switch.
 
+## Unreleased
+
+- Cluster mode supports within-cluster sub-stratum allocation: declare
+  `cluster_substrata_field` and `cluster_substrata_weights`. The seeded
+  cluster selection is unchanged; each selected cluster's row count becomes
+  its within-cluster target, apportioned by `weight * stratum size` with a
+  largest-remainder integer allocation and UTF-8 byte tie-breaks.
+- Over-quota sub-strata retain the whole-cluster take-all result, emit a
+  `CLUSTER_QUOTA_SHORT` warning located at `cluster:<cluster>:<substratum>`,
+  and never add clusters, subjects or overall target volume.
+- `sample.metadata.cluster_allocations` records each selected cluster's size,
+  allocation target, per-layer sizes, quotas and achieved counts; the quota
+  check verifies per-cluster results and the Markdown report renders the
+  allocation table.
+- New warnings `CLUSTER_SUBSTRATA_MISSING` and `CLUSTER_SUBSTRATUM_UNPLANNED`.
+
 ### Scope notes
 
 Only deterministic sampling and verification are supported. Weighted sampling,

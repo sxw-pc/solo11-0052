@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -31,6 +32,8 @@ TOP_LEVEL_FIELDS = frozenset(
         "rate",
         "strata_field",
         "cluster_field",
+        "cluster_substrata_field",
+        "cluster_substrata_weights",
         "expected_distribution",
         "checks",
     }
@@ -93,6 +96,62 @@ def _check_unknown(
                     f"未知字段 {key!r}",
                 )
             )
+
+
+def _validate_substrata_weights(
+    raw: Any, errors: list[dict[str, Any]]
+) -> dict[str, dict[str, float]] | None:
+    """Validate ``cluster -> sub-stratum -> positive weight`` declarations."""
+    if not isinstance(raw, dict) or not raw:
+        errors.append(
+            issue(
+                PLAN_TYPE_ERROR,
+                "plan.cluster_substrata_weights",
+                "cluster_substrata_weights 必须是非空映射",
+            )
+        )
+        return None
+    normalized: dict[str, dict[str, float]] = {}
+    for cluster_id in sorted(raw, key=lambda item: str(item).encode("utf-8")):
+        cluster_path = f"plan.cluster_substrata_weights.{cluster_id}"
+        if not isinstance(cluster_id, str) or not cluster_id:
+            errors.append(
+                issue(
+                    PLAN_TYPE_ERROR,
+                    "plan.cluster_substrata_weights",
+                    "整群名必须是非空字符串",
+                )
+            )
+            continue
+        groups = raw[cluster_id]
+        if not isinstance(groups, dict) or not groups:
+            errors.append(
+                issue(PLAN_TYPE_ERROR, cluster_path, "每个整群的次级权重必须是非空映射")
+            )
+            continue
+        normalized_groups: dict[str, float] = {}
+        for group in sorted(groups, key=lambda item: str(item).encode("utf-8")):
+            group_path = f"{cluster_path}.{group}"
+            if not isinstance(group, str) or not group:
+                errors.append(
+                    issue(PLAN_TYPE_ERROR, cluster_path, "次级分层名必须是非空字符串")
+                )
+                continue
+            weight = groups[group]
+            if not _is_number(weight):
+                errors.append(
+                    issue(PLAN_TYPE_ERROR, group_path, "权重必须是数字")
+                )
+            elif not math.isfinite(weight) or weight <= 0:
+                errors.append(
+                    issue(PLAN_BAD_RANGE, group_path, "权重必须大于 0 且有限")
+                )
+            else:
+                normalized_groups[group] = weight
+        normalized[str(cluster_id)] = normalized_groups
+    if not normalized:
+        return None
+    return normalized
 
 
 def _validate_dataset(raw: Any, errors: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -210,7 +269,7 @@ def validate_plan(raw: Any) -> ValidationResult:
                     expected[group] = count
             normalized["expected_distribution"] = expected
 
-    for field_name in ("strata_field", "cluster_field"):
+    for field_name in ("strata_field", "cluster_field", "cluster_substrata_field"):
         if field_name in raw:
             value = raw[field_name]
             if not isinstance(value, str) or not value.strip():
@@ -220,6 +279,11 @@ def validate_plan(raw: Any) -> ValidationResult:
             else:
                 normalized[field_name] = value.strip()
 
+    if "cluster_substrata_weights" in raw:
+        weights = _validate_substrata_weights(raw["cluster_substrata_weights"], errors)
+        if weights is not None:
+            normalized["cluster_substrata_weights"] = weights
+
     if mode == "stratified" and not normalized.get("strata_field"):
         errors.append(
             issue(PLAN_MISSING_FIELD, "plan.strata_field", "stratified 模式需要 strata_field")
@@ -228,6 +292,37 @@ def validate_plan(raw: Any) -> ValidationResult:
         errors.append(
             issue(PLAN_MISSING_FIELD, "plan.cluster_field", "cluster 模式需要 cluster_field")
         )
+    if mode == "cluster":
+        has_substrata_field = bool(normalized.get("cluster_substrata_field"))
+        has_weights = bool(normalized.get("cluster_substrata_weights"))
+        if not has_substrata_field and not has_weights:
+            pass
+        elif not has_substrata_field:
+            errors.append(
+                issue(
+                    PLAN_MISSING_FIELD,
+                    "plan.cluster_substrata_field",
+                    "声明 cluster_substrata_weights 时必须同时声明 cluster_substrata_field",
+                )
+            )
+        elif not has_weights:
+            errors.append(
+                issue(
+                    PLAN_MISSING_FIELD,
+                    "plan.cluster_substrata_weights",
+                    "声明 cluster_substrata_field 时必须同时声明 cluster_substrata_weights",
+                )
+            )
+    if mode != "cluster":
+        for field_name in ("cluster_substrata_field", "cluster_substrata_weights"):
+            if field_name in raw:
+                errors.append(
+                    issue(
+                        PLAN_FIELD_NOT_APPLICABLE,
+                        f"plan.{field_name}",
+                        f"{field_name} 仅适用于 cluster 模式",
+                    )
+                )
     if mode in ("random", "systematic"):
         for field_name in ("strata_field", "cluster_field", "expected_distribution"):
             if field_name in raw:
